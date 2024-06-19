@@ -17,8 +17,9 @@ params.RGI_db='/export/data/ilri/sarscov2/databases/card/localDB'
 channel
 	.fromPath(params.RGI_db, type: 'dir', checkIfExists:true)
 	.set { RGI_db }
-params.kraken2_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20231129_k2_nt_20231129.tar.gz'
-// params.Kraken2_db='https://genome-idx.s3.amazonaws.com/kraken/k2_nt_20231129.tar.gz'
+// params.kraken2_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20231129_k2_nt_20231129.tar.gz'
+// params.kraken2_db='https://genome-idx.s3.amazonaws.com/kraken/k2_nt_20231129.tar.gz'
+params.kraken2_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20231129_k2_nt_20231129/'
 kraken2_db = Channel.fromPath(params.kraken2_db, checkIfExists:true)
 // Accepts either a path to a file of a HTTP(S)/FTP link to the file
 
@@ -91,7 +92,7 @@ process Kraken2Host {
 
     script:
     """
-    kraken2 --db ${kraken2_db_human} --threads 4 \\
+    kraken2 --db ${kraken2_db_human} --threads $task.cpus \\
             --unclassified-out ${sample_id}.nohost#.fastq \\
             --classified-out ${sample_id}.host#.fastq \\
             --report ${sample_id}.kraken2.report.txt \\
@@ -134,22 +135,22 @@ process BUILD_KRAKEN2DB {
     // debug true
     
     input:
-    path(kraken2_dbFile)
+    path(kraken2_db)
     
     output:
     path("database/*.k2d"), emit: kraken2_db
 
     script:
-    if ( kraken2_dbFile.extension in ['gz', 'tgz'] )
+    if ( kraken2_db.extension in ['gz', 'tgz'] )
 	"""
 	mkdir -p ./{database,db_tmp}
-	tar -xf ${kraken2_dbFile} -C db_tmp
+	tar -xf ${kraken2_db} -C db_tmp
 	mv `find db_tmp/ -name "*.k2d"` database/
 	"""
-    else if ( kraken2_dbFile.isDirectory() ) 
+    else if ( kraken2_db.isDirectory() ) 
 	"""
-	mkdir -p ./{database}
-	cp `find ${kraken2_dbFile}/ -name "*.k2d"` database/
+	mkdir -p database
+	cp `find ${kraken2_db}/ -name "*.k2d"` database/
 	"""
     else
 	error "Path or Link to a kraken2 database not provided in ${params.kraken2_db}"
@@ -160,22 +161,26 @@ process Kraken2Taxonomy {
     
     input:
     tuple val(sample_id), path(trimmed_reads)
-    path("database/*.k2d")
+    path("database/*")
 
     output:
-    tuple val(sample_id), path("*.classified{.,_}*"), emit: classified_reads
+    //tuple val(sample_id), path("*.classified{.,_}*"), emit: classified_reads
     tuple val(sample_id), path("*_kreport.txt"), emit: kraken_kreport
     tuple val(sample_id), path("*_kraken2.out"), emit: kraken_report
 
     script:
     """
-    KRAKEN2_DB_PATH=./database/
-    kraken2 --db database --threads 4 \\
+    #KRAKEN2_DB_PATH=./database/
+    #apptainer run ~/bioinformatics/github/metagenomics/scripts/kraken2_sing/kraken2_latest.sif 
+     kraken2 --db database/ \\
+            --threads $task.cpus \\
             --unclassified-out ${sample_id}.unclassified#.fastq \\
             --classified-out ${sample_id}.classified#.fastq \\
             --report ${sample_id}_tax_kreport.txt \\
             --output ${sample_id}_tax_kraken2.out \\
-            --report-zero-counts --paired ${trimmed_reads}
+            --report-zero-counts \\
+            --gzip-compressed \\
+            --paired ${trimmed_reads[0]} ${trimmed_reads[1]}
     """
 }
 
@@ -237,7 +242,7 @@ process MetaSPAdes {
     """
     spades.py \\
         --meta \\
-        --threads 4 \\
+        --threads $task.cpus \\
         --memory 8 \\
         -1 ${nohost_reads[0]} \\
         -2 ${nohost_reads[1]} \\
@@ -262,7 +267,7 @@ process Kraken2Contigs {
 
     script:
     """
-    kraken2 --db ${kraken2_db_viral} --threads 4 \\
+    kraken2 --db ${kraken2_db_viral} --threads $task.cpus \\
             --report ${sample_id}_taxContigs_kreport.txt \\
             --output ${sample_id}_taxContigs_kraken2.out \\
             --report-zero-counts $contigs
@@ -303,7 +308,7 @@ process SAM2FASTQ {
     //myBamFile = file()
     """
     samtools fastq ${argbamfile} \\
-	-@ 8 \\
+	-@ $task.cpus \\
 	-1 ${sample_id}.argSeqs_R1.fastq.gz \\
 	-2 ${sample_id}.argSeqs_R2.fastq.gz \\
 	-0 ${sample_id}.argSeqs_SE.fastq.gz \\
