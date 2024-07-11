@@ -1,0 +1,58 @@
+Bootstrap: docker
+From: continuumio/miniconda3
+
+%files
+    magviral.yaml
+
+%post
+    #git clone https://github.com/artic-network/fieldbioinformatics
+    #cd fieldbioinformatics && python setup.py install
+    #conda install mamba
+    /opt/conda/bin/conda env create -f magviral.yaml
+    NOW=`date`
+    meta1version="meta1_sif.V`date +"%Y.%m.%d"`"
+    echo "export NOW=\"${NOW}\"" >> $APPTAINER_ENVIRONMENT
+    rm -rf /opt/conda/envs/magviral/opt/krona/taxonomy
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export PATH=/opt/conda/envs/magviral/bin:$PATH
+    export $meta1version
+
+%runscript
+    echo "Created on $NOW"
+    exec $*
+
+%test
+    fastp -v
+    fastqc -v
+    kraken2 -v
+    spades.py -v
+    metaspades.py -v
+    DAS_Tool -v
+    CAT -v
+    run_MaxBin.pl -h
+    ktUpdateTaxonomy.sh -h
+    metabat2 -h
+    checkm2
+
+%labels
+    Author: kibet-gilbert
+    Version: $meta1version
+
+%help
+    Singularity container for viral shotgun metagenomics - MAGviral
+    Apps available:
+    fastp		Trim and removes adapters from fastq files
+    fastqc		QCs the fastq files and outputs a html file
+    kraken2		Performs taxonomic classification of reads and contigs
+    ktUpdateTaxonomy.sh	Inbuilt krona tools app to build/update a krona database from NCBI taxonomy/taxdump.tar.gz
+    ktImportTaxonomy	Inbuilt krona tools app to import and create an interative pie-chart visual of taxonomic abundancies
+    spades.py		Assembly of the genomes
+    metaspades.py	Assembly pf metagenomes (Same as: spades.py --meta)
+    run_MaxBin.pl	MaxBin tool to perform binning of contigs/reads
+    metabat2		Bins contigs (Alternative to run_MaxBin.pl)
+    checkm2		Predict the completeness and contamination of genome bins
+    DAS_Tool		Refines Bins: integrates results from multiple binning algorithms to an optimized, non-redundant set of bins from a single assembly
+    CAT			Contig Annotation Tool (CAT) - taxonomic classification (long DNA sequences, MAGs / bins) of known and highly unknown microorganisms
+
