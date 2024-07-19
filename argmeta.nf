@@ -321,6 +321,7 @@ process CENTRIFUGE {
            -S ${sample_id}_results.txt \\
            -1 ${trimmed_reads[0]} \\
            -2 ${trimmed_reads[1]}
+           #-r ${trimmed_reads[2]}
     #${centrifugeSIFRun} \\
     centrifuge-kreport -x database/"${centrifugeDBName}" \\
            ${sample_id}_results.txt > ${sample_id}.centrifuge_kreport2.txt \\
