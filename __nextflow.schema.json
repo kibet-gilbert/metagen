@@ -1,0 +1,34 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "title": "Metagenomic AMR pipeline parameters",
+    "description": "AMR analysis",
+    "type": "object",
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": ["input"],
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "mimetype": "text/csv",
+                    "format": "file-path-pattern",
+                    "exists": true,
+                    "schema": "assets/schema_input.json",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "CSV samplesheet file containing information about the samples in the experiment.",
+                    "help_text": "Use this to specify the location of your input FastQ files and their associated metadata. You can also use the CSV file to assign different groups or to include long reads for hybrid assembly with metaSPAdes. The CSV file must have at least two columns (sample, short_reads1) and with a maximum CSV sheet having the headers: sample,run,group,short_reads_1,short_reads_2,long_reads. See [usage docs](https://nf-co.re/mag/usage#input-specifications).",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "single_end": {
+                    "type": "boolean",
+                    "description": "Specifies that the input is single-end reads.",
+                    "fa_icon": "fas fa-align-center",
+                    "help_text": "By default, the pipeline expects paired-end data. If you have single-end data, you need to specify `--single_end` on the command line when you launch the pipeline. A normal glob pattern, enclosed in quotation marks, can then be used for `--input`. For example:\n\n```bash\n--single_end --input '*.fastq'\n```\n\nIt is not possible to run a mixture of single-end and paired-end files in one run."
+                }
+            }
+        }
+    }
+}

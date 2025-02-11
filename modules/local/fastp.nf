@@ -12,9 +12,12 @@ process FASTP {
     tuple val(sample_id), path("*.json"), emit: json
     tuple val(sample_id), path("*.log"), emit: log
 
+    // container '/home/gkibet/bioinformatics/github/apptainer/fastp/fastp_apptainer.sif'
 
     script:
+    fastpSIFRun='apptainer run /home/gkibet/bioinformatics/github/apptainer/fastp/fastp_apptainer.sif'
     """
+    #${fastpSIFRun} \\
     fastp \\
         --in1 ${reads[0]} \\
         --in2 ${reads[1]} \\
@@ -27,5 +30,10 @@ process FASTP {
         --detect_adapter_for_pe \\
         --dedup \\
         |& tee -a -i ${sample_id}.fastp.log
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+       fastp: \$(echo \$(fastp -v 2>&1) | sed 's/fastp //')             
+    END_VERSIONS
     """
 }

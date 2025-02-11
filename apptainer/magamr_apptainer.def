@@ -2,18 +2,18 @@ Bootstrap: docker
 From: continuumio/miniconda3
 
 %files
-    magviral.yaml
+    magamr.yaml
 
 %post
-    /opt/conda/bin/conda env create -f magviral.yaml
+    /opt/conda/bin/conda env create -f magamr.yaml
     NOW=`date`
-    meta1version="meta1_sif.V`date +"%Y.%m.%d"`"
+    meta1version="ApptainerImage.V`date +"%Y.%m.%d"`"
     echo "export NOW=\"${NOW}\"" >> $APPTAINER_ENVIRONMENT
-    rm -rf /opt/conda/envs/magviral/opt/krona/taxonomy
+    rm -rf /opt/conda/envs/magamr/opt/krona/taxonomy
 
 %environment
     export PATH=/opt/conda/bin:$PATH
-    export PATH=/opt/conda/envs/magviral/bin:$PATH
+    export PATH=/opt/conda/envs/magamr/bin:$PATH
     export $meta1version
 
 %runscript
@@ -26,12 +26,18 @@ From: continuumio/miniconda3
     kraken2 -v
     spades.py -v
     metaspades.py -v
-    DAS_Tool -v
     CAT -v
+    kma -v
+    prodigal -v
+    bowtie2 --version
+    bedtools --version
+    samtools
+    bamtools
+    bwa
     run_MaxBin.pl -h
     ktUpdateTaxonomy.sh -h
     metabat2 -h
-    checkm2
+    #MaxBin
 
 %labels
     Author: kibet-gilbert
@@ -42,14 +48,22 @@ From: continuumio/miniconda3
     Apps available:
     fastp		Trim and removes adapters from fastq files
     fastqc		QCs the fastq files and outputs a html file
+    bowtie2		Align reads to reference
+    samtools		works on fastq/fasta/bam/sam... index/view/filter...
+    bamtools		samtools companion
+    bwa			Align reads to reference
+    kma			Align reads to reference
+    prodigal		protein prediction analysis
+    bedtools		genome arithmetics* fasta/fastq/bam: conversion/vis/stats
     kraken2		Performs taxonomic classification of reads and contigs
     ktUpdateTaxonomy.sh	Inbuilt krona tools app to build/update a krona database from NCBI taxonomy/taxdump.tar.gz
     ktImportTaxonomy	Inbuilt krona tools app to import and create an interative pie-chart visual of taxonomic abundancies
     spades.py		Assembly of the genomes
     metaspades.py	Assembly pf metagenomes (Same as: spades.py --meta)
-    run_MaxBin.pl	MaxBin tool to perform binning of contigs/reads
+    MaxBin		MaxBin tool to perform binning of contigs/reads
     metabat2		Bins contigs (Alternative to run_MaxBin.pl)
-    checkm2		Predict the completeness and contamination of genome bins
-    DAS_Tool		Refines Bins: integrates results from multiple binning algorithms to an optimized, non-redundant set of bins from a single assembly
+    #checkm2		Predict the completeness and contamination of genome bins
+    #DAS_Tool		Refines Bins: integrates results from multiple binning algorithms to an optimized, non-redundant set of bins from a single assembly
     CAT			Contig Annotation Tool (CAT) - taxonomic classification (long DNA sequences, MAGs / bins) of known and highly unknown microorganisms
+    blast*		NCBI BLAST 2.16.0+ toolkit: blast2sam.pl|blastdb_convert|blastn|blastx|blastdb_aliastool|blastdbcp|blastn_vdb|blastdbcheck|blastdb_path|blastp|blastdbcmd|blast_formatter|blast_report|esearch|efetch|elink|epost|xtract
 

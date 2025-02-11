@@ -2,18 +2,34 @@
 
 nextflow.enable.dsl=2
 
+
 // Reads:
+// params.reads='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/fastq/*_R{1,2}.fastq.gz'
+// params.reads='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/fastq/*con_R{1,2}_001.fastq.gz'
 // params.reads='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/fastq/*con_R{1,2}_001.fastq.gz'
 params.reads='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/fastq/COVG0003*con_R{1,2}_001.fastq.gz'
 reads = Channel.fromFilePairs(params.reads, checkIfExists:true)
 // println(reads.view())
 
 // BAM files
-params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+//params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/COVG00030_S1.sorted.length_100.bam'
+//params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+params.arg_bam_list='/home/gkibet/bioinformatics/github/metagenomics/data/visualization/rgi/rgiBam_Shortlist.txt'
 Channel
-	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
-	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }
+	.fromPath(params.arg_bam_list, type:'file', checkIfExists:true)
+	.splitText( by: 1 )
+	.map { myBamFile -> 
+		def filePath = new File(myBamFile.trim())
+		def fileName = filePath.getSimpleName()
+		[fileName, filePath.path]
+	}
 	.set { arg_bam }
+
+// params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-*_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+// Channel
+// 	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
+// 	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }
+// 	.set { arg_bam }
 // arg_bam.view()
 
 // Databases
@@ -148,9 +164,9 @@ process CARDRGI {
 	-1 ${trimmed_reads[0]} \\
 	-2 ${trimmed_reads[1]} \\
 	-a kma \\
-	-n $task.cpus \\
+	-n 20 \\
 	-o ${sample_id} \\
-	--local ${RGI_db} \\
+	--local \\
 	--include_other_models \\
 	--include_wildcard
     """
@@ -171,20 +187,24 @@ process SAM2FASTQ {
 
     script:
     //myBamFile = file()
-    samtoolsSIFRun='apptainer run /home/gkibet/bioinformatics/github/metagenomics/scripts/samtools/samtools_1.20--ad906e74fde1812b.sif samtools'
+    samtoolsSIFRun='apptainer run /home/gkibet/bioinformatics/github/metagenomics/scripts/samtools/samtools_1.20--ad906e74fde1812b.sif'
     """
-    ${samtoolsSIFRun} flagstat ${argbamfile} \\
+    #${samtoolsSIFRun} \\
+	samtools flagstat ${argbamfile} \\
 	-@ $task.cpus \\
 	|& tee ${sample_id}.flagstat.txt 
-    ${samtoolsSIFRun} view ${argbamfile} \\
+    #${samtoolsSIFRun} \\
+	samtools view ${argbamfile} \\
 	-hu \\
 	-G 0xd \\
 	-@ $task.cpus |
-    ${samtoolsSIFRun} sort -n - \\
+    #${samtoolsSIFRun} \\
+	samtools sort -n - \\
 	-@ $task.cpus \\
 	-o ${sample_id}.sortednFiltered.argSeqs.sam \\
 	|& tee -a ${sample_id}.samtoolsfastq.log
-    ${samtoolsSIFRun} fastq ${sample_id}.sortednFiltered.argSeqs.sam \\
+    #${samtoolsSIFRun} \\
+	samtools fastq ${sample_id}.sortednFiltered.argSeqs.sam \\
 	-@ $task.cpus \\
 	-1 ${sample_id}.argSeqs_R1.fastq.gz \\
 	-2 ${sample_id}.argSeqs_R2.fastq.gz \\
@@ -456,21 +476,55 @@ process KronaContigs {
     """
 }
 
-// include { KRONAPLOT as KRONAPLOT_kraken } from './argmeta.nf'
-// include { KRONAPLOT as KRONAPLOT_centrifuge } from './argmeta.nf'
+include { fromSamplesheet } from 'plugin/nf-validation'
 
+//
+// Validate channels from input samplesheet
+//
+def validateInputSamplesheet(sample_id, sr1, sr2, lr) {
+
+        if ( !sr2 && !params.single_end ) { error("[nf-core/mag] ERROR: Single-end data must be executed with `--single_end`. Note that it is not possible to mix single- and paired-end data in one run! Check input TSV for sample: ${sample_id}") }
+        if ( sr2 && params.single_end ) { error("[nf-core/mag] ERROR: Paired-end data must be executed without `--single_end`. Note that it is not possible to mix single- and paired-end data in one run! Check input TSV for sample: ${sample_id}") }
+
+    return [sample_id, sr1, sr2, lr]
+}
+
+// Create channels from input file provided through params.input and params.assembly_input
+// Validate FASTQ input
+ch_samplesheet = Channel
+    .fromSamplesheet("input")
+    .map {
+        validateInputSamplesheet(it[0], it[1], it[2], it[3])
+    }
+
+// Prepare FASTQs channel and separate short and long reads and prepare
+ch_raw_short_reads = ch_samplesheet
+    .map { sample_id, sr1, sr2, lr ->
+                sample_id.run = sample_id.run == null ? "0" : sample_id.run
+                sample_id.single_end = params.single_end
+
+                if (params.single_end) {
+                    return [ sample_id, [ sr1 ] ]
+                } else {
+                    return [ sample_id, [ sr1, sr2 ] ]
+                }
+        }
+
+ch_raw_long_reads = ch_samplesheet
+    .map { sample_id, sr1, sr2, lr ->
+                if (lr) {
+                    sample_id.run = sample_id.run == null ? "0" : sample_id.run
+                    return [ sample_id, lr ]
+                }
 // Workflow definition
 workflow {
-    FastP(reads)
-    BUILD_KRAKEN2DB(kraken2_human_db)
-    Kraken2Host(FastP.out.trimmed_reads, BUILD_KRAKEN2DB.out.kraken2_db)
-    CARDRGI(Kraken2Host.out.nohost_reads,RGI_db)
-    SAM2FASTQ(arg_bam)
-    BBTOOLSREPAIR(SAM2FASTQ.out.samFile)
-    BUILD_CENTRIFUGEDB(centrifuge_db)
-    CENTRIFUGE(BBTOOLSREPAIR.out.trimmed_reads, BUILD_CENTRIFUGEDB.out.centrifuge_db)
-    BUILD_KronaDB(krona_db)
-    KRONAPLOTB(CENTRIFUGE.out.krona_report, BUILD_KronaDB.out.kronaDB)
+    // FastP(reads)
+    // BUILD_KRAKEN2DB(kraken2_human_db)
+    // Kraken2Host(FastP.out.trimmed_reads, BUILD_KRAKEN2DB.out.kraken2_db)
+    // BUILD_CENTRIFUGEDB(centrifuge_db)
+    // CENTRIFUGE(Kraken2Host.out.nohost_reads, BUILD_CENTRIFUGEDB.out.centrifuge_db)
+    // BUILD_KronaDB(krona_db)
+    // KronaTools(CENTRIFUGE.out.krona_report, BUILD_KronaDB.out.kronaDB)
     // BUILD_KRAKEN2DB(kraken2_db)
     // Kraken2Taxonomy(Kraken2Host.out.nohost_reads, BUILD_KRAKEN2DB.out.kraken2_db)
     // KronaTools(Kraken2Taxonomy.out.kraken_report, BUILD_KronaDB.out.kronaDB)
@@ -479,12 +533,12 @@ workflow {
     // println(Kraken2Host.out.nohost_reads.collect().view())
     // Kraken2Contigs(MetaSPAdes.out.contigs,kraken2_db_viral)
     // KronaContigs(Kraken2Contigs.out.krona_report,taxonomy)
-    // SAM2FASTQ(arg_bam)
+    SAM2FASTQ(arg_bam)
     // BBTOOLSREPAIR(SAM2FASTQ.out.samFile)
-    // BUILD_KRAKEN2DB(kraken2_db)
-    // Kraken2Taxonomy(SAM2FASTQ.out.reads, BUILD_KRAKEN2DB.out.kraken2_db)
-    // BUILD_KronaDB(krona_db)
-    // KRONAPLOT(Kraken2Taxonomy.out.krona_report, BUILD_KronaDB.out.kronaDB)
+    BUILD_KRAKEN2DB(kraken2_db)
+    Kraken2Taxonomy(SAM2FASTQ.out.reads, BUILD_KRAKEN2DB.out.kraken2_db)
+    BUILD_KronaDB(krona_db)
+    KRONAPLOT(Kraken2Taxonomy.out.krona_report, BUILD_KronaDB.out.kronaDB)
     // BUILD_CENTRIFUGEDB(centrifuge_db)
     // CENTRIFUGE(BBTOOLSREPAIR.out.trimmed_reads, BUILD_CENTRIFUGEDB.out.centrifuge_db)
     // KRONAPLOTB(CENTRIFUGE.out.krona_report, BUILD_KronaDB.out.kronaDB)

@@ -2,20 +2,9 @@
 
 nextflow.enable.dsl=2
 
-// params:
-// PhiX
-// params.phix='https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/819/615/GCF_000819615.1_ViralProj14015/GCF_000819615.1_ViralProj14015_genomic.fna.gz'
-params.phix='/export/data/ilri/sarscov2/databases/metagenomicsDBs/GCA_002596845.1_ASM259684v1_genomic.fna'
-Channel
-	.fromPath(params.phix, checkIfExists:true)
-	.map { PhiX -> [PhiX.getSimpleName(), PhiX] }
-	.collect()
-	.set { phix }
-// println(phix.view())
-params.host_removal_save_ids = true
-// params.megahit_fix_cpu_1 = false
 // Reads:
 // params.reads='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/fastq/*con_R{1,2}_001.fastq.gz'
+params.reads='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/fastq/COVG0003*con_R{1,2}_001.fastq.gz'
 reads = Channel.fromFilePairs(params.reads, checkIfExists:true)
 // println(reads.view())
 
@@ -66,31 +55,50 @@ Channel
 	.collect()
 	.set { krona_db }
 
-/*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-	IMPORT MODULES / LOCAL / FUNCTIONS
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-*/
-
-include { BOWTIE2_DB } from '../modules/local/bowtie2_db.nf'
-include { BOWTIE2 as BOWTIE2 } from '../modules/local/bowtie2.nf'
-include { FASTQC as FASTQC } from '../modules/local/fastqc.nf'
-include { FASTP as FASTP } from '../modules/local/fastp.nf'
+include { FASTQC } from '../modules/local/fastqc.nf'
+include { FASTP } from '../modules/local/fastp.nf'
+include { KRAKEN2DB as KRAKEN2DBHOST } from '../modules/local/kraken2_db.nf'
+include { KRAKEN2FILTER } from '../modules/local/kraken2filter.nf'
+include { CARDRGI } from '../modules/local/cardrgi.nf'
+include { SAM2FASTQ } from '../modules/local/sam2fastq.nf'
+include { BBTOOLSREPAIR } from '../modules/local/bbtools_repair.nf'
+include { CENTRIFUGEDB } from '../modules/local/centrifuge_db.nf'
+include { CENTRIFUGE } from '../modules/local/centrifuge.nf'
 include { KRAKEN2DB } from '../modules/local/kraken2_db.nf'
-include { KRAKEN2 } from '../modules/local/kraken2.nf'
+include { KRAKEN2} from '../modules/local/kraken2.nf'
 include { KRONADB } from '../modules/local/krona_db.nf'
-include { KRONA } from '../modules/local/krona.nf'
+include { KRONA as KRONA_KRAKEN2 } from '../modules/local/krona.nf'
+include { KRONA as KRONA_CENTRIFUGE } from '../modules/local/krona.nf'
+include { KRAKEN2FASTA } from '../modules/local/kraken2fasta.nf'
+include { KRONA as KRONA_CONTIGS } from '../modules/local/krona.nf'
+include { METASPADES } from '../modules/local/metaspades.nf'
+
+// '../modules/local/bowtie2_db.nf'
+// '../modules/local/bowtie2.nf'
+// '../modules/local/megahit.nf'
+// '../modules/local/metaspades.nf'
+
 
 // Workflow definition
 workflow {
-    //BOWTIE2_DB(phix)
-    //BOWTIE2(reads, BOWTIE2_DB.out.index)
-    //FASTQC(reads)
+    FASTQC(reads)
     FASTP(reads)
-    KRAKEN2DB(kraken2_db)
-    KRAKEN2(FASTP.out.trimmed_reads, KRAKEN2DB.out.kraken2_db)
-    KRONADB(krona_db)
-    KRONA(KRAKEN2.out.krona_report, KRONADB.out.kronaDB)
-    //println(FASTP.out.reads.collect().view())
+    // KRAKEN2DBHOST(kraken2_human_db)
+    // KRAKEN2FILTER(FASTP.out.trimmed_reads, KRAKEN2DBHOST.out.kraken2_db)
+    CARDRGI(FASTP.out.trimmed_reads, RGI_db)
+    // SAM2FASTQ(arg_bam)
+    // BBTOOLSREPAIR(SAM2FASTQ.out.samFile)
+    // CENTRIFUGEDB(centrifuge_db)
+    // CENTRIFUGE(BBTOOLSREPAIR.out.trimmed_reads, CENTRIFUGEDB.out.centrifuge_db)
+    // KRONADB(krona_db)
+    // KRONA_CENTRIFUGE(CENTRIFUGE.out.krona_report, KRONADB.out.kronaDB)
+    // KRAKEN2DB(kraken2_db)
+    // KRAKEN2(BBTOOLSREPAIR.out.trimmed_reads, KRAKEN2DB.out.kraken2_db)
+    // KRONA_KRAKEN2(KRAKEN2.out.krona_report, KRONADB.out.kronaDB)
+    // METASPADES(KRAKEN2FILTER.out.nohost_reads)
+    // println(KRAKEN2FILTER.out.nohost_reads.view())
+    // println(KRAKEN2FILTER.out.nohost_reads.collect().view())
+    // KRAKEN2FASTA(METASPADES.out.contigs, KRAKEN2DB.out.kraken2_db)
+    // KRONA_CONTIGS(KRAKEN2FASTA.out.krona_report, KRONADB.out.kronaDB)
 }
 

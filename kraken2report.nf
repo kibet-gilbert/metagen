@@ -11,8 +11,9 @@ reads = Channel.fromFilePairs(params.reads, checkIfExists:true)
 // println(reads.view())
 
 // BAM files
-//params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*_S0.sorted.length_100.bam'
-params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+//params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/COVG00030_S1.sorted.length_100.bam'
+//params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-*_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
 Channel
 	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
 	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }

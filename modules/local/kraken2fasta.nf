@@ -1,4 +1,4 @@
-process KRKAKEN2FASTA {
+process KRAKEN2FASTA {
     tag "$sample_id"
 
     input:
