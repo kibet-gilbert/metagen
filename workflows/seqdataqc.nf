@@ -20,25 +20,25 @@ reads = Channel.fromFilePairs(params.reads, checkIfExists:true)
 // println(reads.view())
 
 // BAM files
-params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
-Channel
-	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
-	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }
-	.set { arg_bam }
+// params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+// Channel
+// 	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
+// 	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }
+// 	.set { arg_bam }
 // arg_bam.view()
 
 // Databases
 // RGI
 // RGI_db = file('/export/data/ilri/sarscov2/databases/card/localDB', type: 'dir')
-params.RGI_db='/export/data/ilri/sarscov2/databases/card/localDB'
-channel
-	.fromPath(params.RGI_db, type: 'dir', checkIfExists:true)
-	.collect()
-	.set { RGI_db }
+// params.RGI_db='/export/data/ilri/sarscov2/databases/card/localDB'
+// channel
+// 	.fromPath(params.RGI_db, type: 'dir', checkIfExists:true)
+// 	.collect()
+// 	.set { RGI_db }
 // kraken2
 // params.kraken2_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20231129_k2_nt_20231129.tar.gz'
 // params.kraken2_db='https://genome-idx.s3.amazonaws.com/kraken/k2_nt_20231129.tar.gz'
-params.kraken2_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20231129_k2_nt_20231129/'
+params.kraken2_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/k2_core_nt_20241228/'
 Channel
 	.fromPath(params.kraken2_db, checkIfExists:true)
 	.collect()
@@ -46,12 +46,12 @@ Channel
 // Accepts either a path to a file of a HTTP(S)/FTP link to the file
 // centrifuge
 // params.centrifuge_db='https://genome-idx.s3.amazonaws.com/centrifuge/nt_2018_3_3.tar.gz'
-params.centrifuge_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20240222_centrifugeDb_hbpvfa.tar.gz'
-Channel
-	.fromPath(params.centrifuge_db, checkIfExists:true)
-	.map { myCentrifugeDB -> [myCentrifugeDB.getSimpleName(), myCentrifugeDB] }
-	.collect()
-	.set { centrifuge_db }
+// params.centrifuge_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/20240222_centrifugeDb_hbpvfa.tar.gz'
+// Channel
+// 	.fromPath(params.centrifuge_db, checkIfExists:true)
+// 	.map { myCentrifugeDB -> [myCentrifugeDB.getSimpleName(), myCentrifugeDB] }
+// 	.collect()
+// 	.set { centrifuge_db }
 // kraken2 human
 params.kraken2_human_db='/export/data/ilri/sarscov2/databases/metagenomicsDBs/kraken2_human_db.tar.gz'
 Channel
@@ -85,7 +85,7 @@ include { KRONA } from '../modules/local/krona.nf'
 workflow {
     //BOWTIE2_DB(phix)
     //BOWTIE2(reads, BOWTIE2_DB.out.index)
-    //FASTQC(reads)
+    FASTQC(reads)
     FASTP(reads)
     KRAKEN2DB(kraken2_db)
     KRAKEN2(FASTP.out.trimmed_reads, KRAKEN2DB.out.kraken2_db)

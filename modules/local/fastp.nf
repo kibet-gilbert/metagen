@@ -1,4 +1,3 @@
-
 process FASTP {
     tag "$sample_id"
     
@@ -6,23 +5,19 @@ process FASTP {
     tuple val(sample_id), path(reads)
 
     output:
-    tuple val(sample_id), path("*-trim*"), emit: trimmed_reads
+    tuple val(sample_id), path("*_trim*"), emit: trimmed_reads
     tuple val(sample_id), path("*failed*"), emit: failed_reads
     tuple val(sample_id), path("*.html"), emit: html
     tuple val(sample_id), path("*.json"), emit: json
     tuple val(sample_id), path("*.log"), emit: log
 
-    // container '/home/gkibet/bioinformatics/github/apptainer/fastp/fastp_apptainer.sif'
-
     script:
-    fastpSIFRun='apptainer run /home/gkibet/bioinformatics/github/apptainer/fastp/fastp_apptainer.sif'
     """
-    #${fastpSIFRun} \\
     fastp \\
         --in1 ${reads[0]} \\
         --in2 ${reads[1]} \\
-        --out1 ${sample_id}-trim_R1.fastq.gz \\
-        --out2 ${sample_id}-trim_R2.fastq.gz \\
+        --out1 ${sample_id}_R1_trim.fastq.gz \\
+        --out2 ${sample_id}_R2_trim.fastq.gz \\
         --html ${sample_id}.fastp.html \\
 	--json ${sample_id}.fastp.json \\
         --failed_out ${sample_id}_failed.fastq.gz \\
@@ -31,9 +26,9 @@ process FASTP {
         --dedup \\
         |& tee -a -i ${sample_id}.fastp.log
 
-    cat <<-END_VERSIONS > versions.yml
+    cat <<END_VERSIONS > versions.yml
     "${task.process}":
-       fastp: \$(echo \$(fastp -v 2>&1) | sed 's/fastp //')             
+          fastp: \$(echo \$(fastp -v 2>&1) | sed 's/fastp //')
     END_VERSIONS
     """
 }
