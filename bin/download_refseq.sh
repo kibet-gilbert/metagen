@@ -33,7 +33,7 @@ download_group () {
 }
 
 # Default list of major RefSeq groups
-ALL_TAXA=(archaea bacteria fungi invertebrate plant protozoa vertebrate_mammalian vertebrate_other viral)
+ALL_TAXA=(archaea bacteria fungi invertebrate plant plasmid protozoa vertebrate_mammalian vertebrate_other viral)
 
 if [ $# -eq 0 ]; then
     echo "No ccmetagen_taxon provided. Defaulting to All groups..."

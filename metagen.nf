@@ -10,11 +10,11 @@ reads = Channel.fromFilePairs(params.reads, checkIfExists:true)
 // println(reads.view())
 
 // BAM files
-params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
-Channel
-	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
-	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }
-	.set { arg_bam }
+// params.arg_bam='/home/gkibet/bioinformatics/github/metagenomics/data/2022-06-09_run01_nextseq_metagen/results_rgi/rgi/*.sorted.length_100.bam'
+// Channel
+// 	.fromPath(params.arg_bam, type:'file', checkIfExists:true)
+// 	.map { myBamFile -> [myBamFile.getSimpleName(), myBamFile] }
+// 	.set { arg_bam }
 // arg_bam.view()
 
 // Databases
@@ -505,13 +505,13 @@ workflow {
     KRONAPLOTB(CENTRIFUGE.out.krona_report, BUILD_KronaDB.out.kronaDB)
     KRONAPLOT(Kraken2Taxonomy.out.krona_report, BUILD_KronaDB.out.kronaDB)
     // MetaSPAdes(FastP.out.trimmed_reads)
-    MEGAHIT(FastP.out.trimmed_reads)
+    // MEGAHIT(FastP.out.trimmed_reads)
     // println(Kraken2Host.out.nohost_reads.view())
     // println(Kraken2Host.out.nohost_reads.collect().view())
     // Kraken2Contigs(MetaSPAdes.out.contigs,BUILD_KRAKEN2DB.out.kraken2_db)
     // KronaContigs(Kraken2Contigs.out.krona_report,BUILD_KronaDB.out.kronaDB)
-    Kraken2Contigs(MEGAHIT.out.contigs,BUILD_KRAKEN2DB.out.kraken2_db)
-    KronaContigs(Kraken2Contigs.out.krona_report,BUILD_KronaDB.out.kronaDB)
+    // Kraken2Contigs(MEGAHIT.out.contigs,BUILD_KRAKEN2DB.out.kraken2_db)
+    // KronaContigs(Kraken2Contigs.out.krona_report,BUILD_KronaDB.out.kronaDB)
     // SAM2FASTQ(arg_bam)
     // BBTOOLSREPAIR(SAM2FASTQ.out.samFile)
     // BUILD_KRAKEN2DB(kraken2_db)

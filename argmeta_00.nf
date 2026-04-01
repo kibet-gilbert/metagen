@@ -9,7 +9,9 @@ params.single_end=false
 // reads = Channel.fromFilePairs(params.reads, checkIfExists:true)
 // println(reads.view())
 
+// Databases
 // hostile indices
+//params.hostile_db='/export/data/ilri/sarscov2/databases/hostile/human-t2t-hla.argos-bacteria-985_rs-viral-202401_ml-phage-202401/*.bt2'
 params.hostile_db='/export/data/ilri/sarscov2/databases/hostile/human-t2t-hla.argos-bacteria-985_rs-viral-202401_ml-phage-202401/'
 Channel
 	.fromPath(params.hostile_db, type: 'dir', checkIfExists:true)
@@ -43,49 +45,21 @@ Channel
 	.set { disinfinder_db }
 
 // RGI
+// RGI_db = file('/export/data/ilri/sarscov2/databases/card/localDB', type: 'dir')
 params.carddbcversion = '4.0.1'
 params.carddbwversion = '4.0.2'
+params.RGI_db='/export/data/ilri/sarscov2/databases/card/localDB/card.json'
+channel
+        .fromPath(params.RGI_db, type: 'file', checkIfExists:true)
+        .map { myRGIDB -> [myRGIDB.getParent().getBaseName(), myRGIDB.toString()] }
+	.collect()
+        .set { RGI_db }
 params.CARD_db='/export/data/ilri/sarscov2/databases/card/localDB'
 channel
 	.fromPath(params.CARD_db, type: 'dir', checkIfExists:true)
         .map { myCARDDB -> [myCARDDB.getSimpleName(), myCARDDB.toString()] }
 	.collect()
 	.set { CARD_db }
-
-// MGS2AMR
-params.mgs2amr_db='/export/data/ilri/sarscov2/databases/mgs2amr/mgs2amr_assets/dataAndScripts/mgs2amr.db'
-mgs2amr_db = Channel.value(
-    tuple(
-        file(params.mgs2amr_db).getSimpleName(),
-        params.mgs2amr_db
-    )
-)
-// mgs2amr_db.view()
-
-// MGS2AMR params
-params.mgs2amr_step = 4
-params.mgs2amr_verbose = 1
-params.mgs2amr_compress = true
-params.mgs2amr_force = true
-step_ch     = Channel.value(params.mgs2amr_step)
-verbose_ch  = Channel.value(params.mgs2amr_verbose)
-compress_ch = Channel.value(params.mgs2amr_compress)
-force_ch    = Channel.value(params.mgs2amr_force)
-
-// MGS2AMR dataAndScripts directory
-params.dataAndScripts_dir = '/export/data/ilri/sarscov2/databases/mgs2amr/mgs2amr_assets/dataAndScripts_assests'
-dataAndScripts_dir = Channel.value( file(params.dataAndScripts_dir) )
-// dataAndScripts_dir.view()
-
-// BLASTDB
-params.blast_db='/export/data/bio/ncbi/blast/db/v5/'
-blast_db = Channel.value(
-    tuple(
-        file(params.blast_db).getSimpleName(),
-        params.blast_db
-    )
-)
-// blast_db.view()
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -100,8 +74,6 @@ include { FASTP } from './modules/local/fastp.nf'
 include { HOSTILE } from './modules/local/hostile.nf'
 include { RESFINDER } from './modules/local/resfinder.nf'
 include { CARDRGI } from './modules/local/cardrgi.nf'
-include { MGS2AMR } from './modules/local/mgs2amr.nf'
-include { BBTOOLSREFORMAT } from './modules/local/bbtools_reformat_ambiguous.nf'
 
 // Validate channels from input samplesheet
 def validateInputSamplesheet(sample_id, mode, sr1, sr2, lr) {
@@ -160,18 +132,9 @@ workflow {
     FASTP(ch_raw_short_reads)
     // println(FASTP.out.trimmed_reads.view())
     // FASTQC_TRIMMED(FASTP.out.trimmed_reads)
-    HOSTILE(FASTP.out.trimmed_reads,
-        hostileDB)
-    RESFINDER(HOSTILE.out.reads,
-        resfinder_db,
-        pointfinder_db,
-        disinfinder_db)
-     CARDRGI(HOSTILE.out.reads, 
-         CARD_db)
-    BBTOOLSREFORMAT(HOSTILE.out.reads)
-    MGS2AMR(BBTOOLSREFORMAT.out.maskedreads, 
-        dataAndScripts_dir,
-        blast_db)
+    HOSTILE(FASTP.out.trimmed_reads,hostileDB)
+    RESFINDER(HOSTILE.out.reads, resfinder_db, pointfinder_db, disinfinder_db)
+    CARDRGI(HOSTILE.out.reads, CARD_db)
     // BUILD_KRAKEN2DB(kraken2_human_db)
     // Kraken2Host(FastP.out.trimmed_reads, BUILD_KRAKEN2DB.out.kraken2_db)
     // BUILD_CENTRIFUGEDB(centrifuge_db)

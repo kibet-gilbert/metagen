@@ -53,17 +53,25 @@ channel
 	.set { CARD_db }
 
 // MGS2AMR
-params.mgs2amr_db='/export/data/ilri/sarscov2/databases/mgs2amr/mgs2amr_assets'
+// params.mgs2amr_db='/export/data/ilri/sarscov2/databases/mgs2amr/mgs2amr_assets'
+params.mgs2amr_db='/export/data/ilri/sarscov2/databases/mgs2amr/mgs2amr_assets/dataAndScripts/mgs2amr.db'
 Channel
-        .fromPath(params.mgs2amr_db, type: 'dir', checkIfExists: true)
+        .fromPath(params.mgs2amr_db, type: 'file', checkIfExists: true)
         .map { MGS2AMRDB -> [MGS2AMRDB.getSimpleName(), MGS2AMRDB.toString()] }
         .collect()
         .set { mgs2amr_db }
+// println(mgs2amr_db.view())
 // MGS2AMR params
 params.mgs2amr_step = 4
 params.mgs2amr_verbose = 1
 params.mgs2amr_compress = true
 params.mgs2amr_force = true
+
+// MGS2AMR dataAndScripts directory
+params.dataAndScripts_dir = '/export/data/ilri/sarscov2/databases/mgs2amr/mgs2amr_assets/dataAndScripts_assests'
+Channel
+    .fromPath(params.dataAndScripts_dir, type: 'dir', checkIfExists: true)
+    .set { dataAndScripts_dir }
 
 // BLASTDB
 params.blast_db='/export/data/bio/ncbi/blast/db/v5/'
@@ -87,6 +95,7 @@ include { HOSTILE } from './modules/local/hostile.nf'
 include { RESFINDER } from './modules/local/resfinder.nf'
 include { CARDRGI } from './modules/local/cardrgi.nf'
 include { MGS2AMR } from './modules/local/mgs2amr.nf'
+include { BBTOOLSREFORMAT } from './modules/local/bbtools_reformat_ambiguous.nf'
 
 // Validate channels from input samplesheet
 def validateInputSamplesheet(sample_id, mode, sr1, sr2, lr) {
@@ -153,12 +162,13 @@ workflow {
         disinfinder_db)
     CARDRGI(HOSTILE.out.reads, 
         CARD_db)
-    MGS2AMR(HOSTILE.out.reads, 
+    BBTOOLSREFORMAT(HOSTILE.out.reads)
+    MGS2AMR(BBTOOLSREFORMAT.out.maskedreads, 
         params.mgs2amr_step,
         params.mgs2amr_verbose,
         params.mgs2amr_compress,
         params.mgs2amr_force,
-        mgs2amr_db)
+        mgs2amr_db, dataAndScripts_dir)
     // BUILD_KRAKEN2DB(kraken2_human_db)
     // Kraken2Host(FastP.out.trimmed_reads, BUILD_KRAKEN2DB.out.kraken2_db)
     // BUILD_CENTRIFUGEDB(centrifuge_db)

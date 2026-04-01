@@ -1,6 +1,6 @@
 
 process RESFINDER {
-    tag "${sample_id} + ${ResFinderName}"
+    tag "${sample_id}+${ResFinderName}"
 
     input:
     tuple val(sample_id), path(nohost_reads)                         
