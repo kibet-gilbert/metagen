@@ -46,7 +46,7 @@ The two-module design (`export_blastdb.sh` + `clean_fasta.sh`) means the cleanin
 
 | Property | `nt` | `core_nt` |
 |----------|------|-----------|
-| Size (compressed) | ~300 GB | ~100 GB |
+| Size (compressed) | ~1300 GB | ~350 GB |
 | Sequences | ~100 million | ~30 million |
 | Coverage | All GenBank, RefSeq, EMBL, DDBJ, patents, environmental | Curated high-quality subset |
 | Redundancy | High | Reduced |
@@ -91,8 +91,8 @@ module load python/3.9
 
 | Database | Raw export | After cleaning | KMA index |
 |----------|------------|---------------|-----------|
-| `core_nt` | ~100 GB | ~60–80 GB | +20–30 GB |
-| `nt` | ~300 GB | ~180–220 GB | +60 GB |
+| `core_nt` | ~400 GB | ~360–380 GB | +200–300 GB |
+| `nt` | ~1300 GB | ~1180–1220 GB | +600 GB |
 | RefSeq reference | ~350 GB (raw .fna.gz) | ~200 GB (merged) | +50 GB |
 
 > **Tip:** Run on a scratch filesystem with at least 2× the final size free, to accommodate intermediates.
