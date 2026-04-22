@@ -1,109 +1,121 @@
 #!/usr/bin/env bash
-
-# This script was updated from: https://github.com/vrmarcelino/CCMetagen/blob/master/docs/benchmarking/rename_nt/rename_refseq.sh
-#=========================================================================#
-# download_refseq.sh does the following:
-# 1. Download all "reference genomes" from NCBI Refseq, accessions and taxids
-# 2. Edit headers to >taxid|accession.
-# NOTE: For CCMetagen.py add the '-r nt' command, ('-r nr' is the default)
-
-# Usage: download_all_refseq.sh  [$dest_folder]  [$nthreads] [$want_rep]
-#--------------------------------------------------------------------------#
-
-#!/usr/bin/env bash
+# =============================================================================
+# download_all_refseq.sh
+# Download NCBI RefSeq reference genomes, stamp taxID headers, audit,
+# resolve unmapped genomes via NCBI eutils, merge to a single FASTA for
+# CCMetagen/KMA, and optionally clean up intermediate files.
+#
+# Usage:
+#   download_all_refseq.sh [workdir] [nthreads] [want_rep]
+#
+#   workdir  : destination folder          (default: refseq)
+#   nthreads : parallel jobs               (default: 20)
+#   want_rep : 1 = include representative  (default: 0 = reference only)
+#
+# Environment overrides:
+#   KEEP_INTERMEDIATES=1   keep per-genome .fna.gz and .fna files after merge
+#   SKIP_MERGE=1           skip the final cat/merge step
+#   NCBI_EMAIL             e-mail for eutils polite requests (recommended)
+# =============================================================================
 set -Eeuo pipefail
 
-# ---- user settings ----
-# Assumptions: threeds=20, workdir="refseq".
+# ── User settings ─────────────────────────────────────────────────────────────
 workdir="${1:-refseq}"
-threeds="${2:-20}"     # number of parallel downloads
-want_rep="${3:-0}"    # set to 1 to include "representative genome" in addition to "reference genome"
-# -----------------------
+threeds="${2:-20}"
+want_rep="${3:-0}"
+KEEP_INTERMEDIATES="${KEEP_INTERMEDIATES:-0}"
+SKIP_MERGE="${SKIP_MERGE:-0}"
+NCBI_EMAIL="${NCBI_EMAIL:-${USER}@ilri.org}"
 
-if [ -z "$workdir" ];
-then echo " < ! >   need to provide a destination folder!" ;
-exit 1 ; fi
+[[ -z "$workdir" ]] && { echo "[ERROR] Provide a destination folder"; exit 1; }
+[[ -z "$threeds" ]] && threeds=20
+mkdir -p "$workdir"
 
-if [ -z "$threeds" ] ; then threeds=10 ; fi
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOG="${workdir}/download_refseq.log"
+ts()  { date +"%Y-%m-%d %H:%M:%S"; }
+log() { echo "[$(ts)] $*" | tee -a "$LOG"; }
+die() { echo "[$(ts)] ERROR: $*" | tee -a "$LOG" >&2; exit 1; }
 
-# the dir wherin the RefSeq is stowed
-mkdir -p $workdir
-echo -e "\n[Workdir]: ${workdir}"
-echo -e "[Threads]: ${threeds}"
+{
+  echo "======================================================================"
+  echo "Started          : $(ts)"
+  echo "Script           : $0"
+  echo "workdir          : $workdir"
+  echo "Threads          : $threeds"
+  echo "want_rep         : $want_rep"
+  echo "KEEP_INTERMEDIATES: $KEEP_INTERMEDIATES"
+  echo "SKIP_MERGE       : $SKIP_MERGE"
+  echo "======================================================================"
+} | tee -a "$LOG"
 
-echo " +-1-+ recommended to download NCBI RefSeq genomes - 30m  ---------"
-# 1) Download the latest assembly summary for RefSeq
+# ── Tool checks ───────────────────────────────────────────────────────────────
+for t in wget parallel pigz gzip awk sed python3 curl; do
+  command -v "$t" >/dev/null 2>&1 || die "Missing required tool: $t"
+done
+
+# =============================================================================
+# STEP 1 — Download assembly summary
+# =============================================================================
+log "STEP 1: Download NCBI RefSeq assembly summary"
 refseq_assembly_summary="${workdir}/assembly_summary.txt"
 if [[ -s "$refseq_assembly_summary" ]]; then
-    echo "[INFO] Found existing assembly summary, skipping download: $refseq_assembly_summary"
+  log "  Found existing: $refseq_assembly_summary — skipping download"
 else
-    echo "[INFO] Downloading NCBI RefSeq assembly summary …"
-    wget -O "$refseq_assembly_summary" \
-        "https://ftp.ncbi.nlm.nih.gov/genomes/refseq/assembly_summary_refseq.txt" \
-        > "$workdir/wgetlog1.temp" 2>&1
+  wget -q -O "$refseq_assembly_summary" \
+    "https://ftp.ncbi.nlm.nih.gov/genomes/refseq/assembly_summary_refseq.txt" \
+    2>>"$LOG" || die "Failed to download assembly summary"
+  log "  Downloaded: $refseq_assembly_summary"
 fi
-echo -e "\t[NCBI RefSeq assembly summary file]: ${refseq_assembly_summary}"
+log "  Entries: $(wc -l < "$refseq_assembly_summary")"
 
-# 2) Filter lines - clean URL list:
-#    - keep refseq_category == "reference genome" (and optionally "representative genome")
-#    - extract column 20 (ftp_path)
-# Column 20 is ftp_path; column 5 is refseq_category.
+# =============================================================================
+# STEP 2 — Filter to reference (and optionally representative) genome URLs
+# =============================================================================
+log "STEP 2: Filter assembly summary → FTP URL list"
 assembly_summary_ref="${workdir}/assembly_summary_ref.txt"
 if [[ -s "$assembly_summary_ref" ]]; then
-    echo "[INFO] Found existing assembly URLs file, skipping generation: $assembly_summary_ref"
+  log "  Found existing: $assembly_summary_ref — skipping generation"
 else
-    echo "[INFO] Generating NCBI RefSeq assembly summary URLs…"
-    if [[ "${want_rep}" == "1" ]]; then
-      awk -F '\t' 'NR>1 && $1 !~ /^#/ && ($5=="reference genome" || $5=="representative genome") {print $20}' \
-        "${refseq_assembly_summary}" \
-      | sed -e 's/^"//; s/"$//' -e 's:/*$::' \
-      > "${assembly_summary_ref}"
-    else
-      awk -F '\t' 'NR>1 && $1 !~ /^#/ && $5=="reference genome" {print $20}' \
-        "${refseq_assembly_summary}" \
-      | sed -e 's/^"//; s/"$//' -e 's:/*$::' \
-      > "${assembly_summary_ref}"
-    fi
+  if [[ "$want_rep" == "1" ]]; then
+    awk -F '\t' 'NR>1 && $1 !~ /^#/ && ($5=="reference genome" || $5=="representative genome") {print $20}' \
+      "$refseq_assembly_summary" \
+    | sed -e 's/^"//; s/"$//' -e 's:/*$::' \
+    > "$assembly_summary_ref"
+  else
+    awk -F '\t' 'NR>1 && $1 !~ /^#/ && $5=="reference genome" {print $20}' \
+      "$refseq_assembly_summary" \
+    | sed -e 's/^"//; s/"$//' -e 's:/*$::' \
+    > "$assembly_summary_ref"
+  fi
+  log "  Generated: $assembly_summary_ref"
 fi
+refseq_URLs="$assembly_summary_ref"
+log "  URLs to download: $(wc -l < "$refseq_URLs")"
 
-refseq_URLs="${assembly_summary_ref}"
-echo -e "\t[NCBI RefSeq genome assembly urls]: ${refseq_URLs}"
+# =============================================================================
+# STEP 3 — Parallel download with retries
+# =============================================================================
+log "STEP 3: Download genome FASTA files in parallel"
 
-# 3) Download in parallel, robustly
-#    - construct basename safely after trimming trailing slash
-#    - retries + resume (-c)
-#    - write to ${workdir}/${basename}_genomic.fna.gz
-#    - quiet progress but keep errors in log
-# Polite RefSeq downloader with retries
-# Usage: download_refseq_polite refseq 10 8 0.25
-#   arg1 = workdir (defaults: refseq)
-#   arg2 = max_rounds (defaults: 10)
-#   arg3 = jobs (defaults: 8)
-#   arg4 = delay seconds between job starts (defaults: 0.25)
-#   arg5 = NCBI RefSeq genome assembly urls (defaults: ${refseq_URLs})
-# Define the per-job worker as a real function and export it
 _download_job() {
   set -Eeuo pipefail
   local idx="$1"
   local url="${2%/}"
-  local base="$(basename "$url")"
+  local base
+  base="$(basename "$url")"
   local file="$WORKDIR/${base}_genomic.fna.gz"
   local full="$url/${base}_genomic.fna.gz"
   local md5url="$url/md5checksums.txt"
   local md5check_file="${WORKDIR}/_dl/md5checksum.r${ROUND}.txt"
 
-  # Skip if $file is already present and non-empty
   if [[ -s "$file" ]]; then
-    echo "[INFO] Round ${ROUND}/${MAX_ROUNDS}: ${base} — ${idx}/${TOTAL} skipping..." #| tee -a "$LOGFILE"
     echo "STATUS:OK $url" >&2
-    # return 0
   else
-    echo "[INFO] Round ${ROUND}/${MAX_ROUNDS}: ${base} — ${idx}/${TOTAL} fetching..." #| tee -a "$LOGFILE"
     echo "STATUS:GET $full" >&2
     local tmp="${file}.part.$$"
-
     if wget -q \
-            --user-agent="ILRI-ccmetagen/1.0 (+contact: ${USER}@ilri.org)" \
+            --user-agent="ILRI-ccmetagen/1.0 (+contact: ${NCBI_EMAIL:-user@example.org})" \
             --tries=3 --timeout=90 --read-timeout=600 \
             --waitretry=5 --retry-on-http-error=429,500,502,503,504 \
             -O "$tmp" "$full"; then
@@ -116,204 +128,393 @@ _download_job() {
     fi
   fi
 
-  # Only reached after a successful fresh download 
-  # Check if md5 was already recorded from a previous attempt this round
-  # MD5 capture
-  local md5raw md5line md5sumcheck
-  md5sumcheck=$(grep "${base}_genomic.fna.gz" "${md5check_file}" || true)
-  if [[ -n "$md5sumcheck" ]]; then
-    return 0
-  fi
+  # MD5 capture (skip if already recorded this round)
+  local md5sumcheck md5raw md5line
+  md5sumcheck=$(grep "${base}_genomic.fna.gz" "$md5check_file" 2>/dev/null || true)
+  if [[ -n "$md5sumcheck" ]]; then return 0; fi
 
-  echo "[INFO] md5sumcheck: ${base} — ${idx}/${TOTAL} fetching..."
   md5raw="$(wget -q -O - "$md5url" 2>/dev/null || true)"
   if [[ -n "$md5raw" ]]; then
     md5line="$(printf '%s\n' "$md5raw" | grep "${base}_genomic.fna.gz" || true)"
     if [[ -n "$md5line" ]]; then
-      printf '%s\t%s\n' "$md5line" >> "${md5check_file}"
-    else
-      echo -e "\t[INFO]: NO_MD5_LINE $url"
+      printf '%s\n' "$md5line" >> "$md5check_file"
     fi
-  else
-    echo -e "\t[INFO]: NO_MD5_FILE $url"
   fi
 }
 export -f _download_job
+export NCBI_EMAIL
 
 download_refseq_polite() {
-  set -Eeuo pipefail
-  local workdir="${1:-refseq}"
-  local max_rounds="${2:-10}"
-  local jobs="${3:-${threeds}}"
-  local delay="${4:-0.25}"
-  local src="${5:-${refseq_URLs}}"
+  local workdir="$1"  max_rounds="$2"  jobs="$3"  delay="$4"  src="$5"
   local state="${workdir}/_dl"
   mkdir -p "$state"
+  export WORKDIR="$workdir"
 
-  # Ensure URL list is clean (no quotes, no trailing slashes)
   sed -E -i \
-    -e "s/^[\"']//" \
-    -e "s/[\"']$//" \
-    -e 's:/*$::' \
+    -e "s/^[\"']//" -e "s/[\"']$//" -e 's:/*$::' \
     "$src"
 
-  # Seed input list (round 1 uses the full list)
   cp -f "$src" "${state}/urls.r1.txt"
 
-  local r=1
+  local r=1  next_fail=""
   while (( r <= max_rounds )); do
     local in="${state}/urls.r${r}.txt"
-    # If there's nothing to download, stop early
     if [[ ! -s "$in" ]]; then
-      echo "[INFO] Nothing to do in round ${r}—all done."
+      log "  Nothing to do in round ${r} — all done."
       break
     fi
 
-    # If there is - set per‑round paths & clears logs
-    local log="${state}/wget.r${r}.log"
-    local md5CheckFile="${state}/md5checksum.r${r}.txt"
-    local joblog="${state}/parallel.r${r}.joblog"
-    : > "$log"
-    : > "$md5CheckFile"
-    local total=$(wc -l < "$in")
-    echo "[INFO] wget logs: ${log}..."
-    echo "[INFO] Parallel logs: ${joblog}..."
-    echo "[INFO] md5checksum file: ${md5CheckFile}..."
-    echo "[INFO] Round ${r}/${max_rounds} — ${total} URLs to fetch..."
+    local log_r="${state}/wget.r${r}.log"
+    local md5f="${state}/md5checksum.r${r}.txt"
+    local jlog="${state}/parallel.r${r}.joblog"
+    : > "$log_r"; : > "$md5f"
 
-    # Build a numbered input for this round: <idx>\t<url>
+    local total
+    total=$(wc -l < "$in")
+    log "  Round ${r}/${max_rounds} — ${total} URLs"
+
     nl -ba -w1 -s $'\t' "$in" > "${state}/urls.r${r}.num.txt"
-    local urlNumFile="${state}/urls.r${r}.num.txt"
-    
-    # Export metadata so jobs can log “Round R/M : BASE — idx/total <status>”
-    export WORKDIR="$workdir"
-    export LOGFILE="$log"
+
     export ROUND="$r"
     export MAX_ROUNDS="$max_rounds"
     export TOTAL="$total"
-    local next_fail=""
+    export LOGFILE="$log_r"
 
-    # Avoid --halt now,fail=1 here—we want all jobs to run, then we retry the remaining failures as a batch.
     parallel --jobs "$jobs" --delay "$delay" \
-         --colsep '\t' --silent \
-         --joblog "$joblog" \
-         _download_job {1} {2} \
-         :::: "$urlNumFile" >> "$log" 2>&1 || true
+      --colsep '\t' --silent \
+      --joblog "$jlog" \
+      _download_job {1} {2} \
+      :::: "${state}/urls.r${r}.num.txt" >> "$log_r" 2>&1 || true
 
-    # Build next-round retry list from FAIL lines
-    # save the failure path after building it:
-    local next_fail="${state}/urls.r$((r+1)).txt"
-    awk '/^FAIL /{print $2}' "$log" | sort -u > "$next_fail"
+    next_fail="${state}/urls.r$((r+1)).txt"
+    awk '/^STATUS:FAIL /{print $2}' "$log_r" | sort -u > "$next_fail"
 
-    # Progress summary
-    printf "[INFO] Round %d summary: " "$r"
-    awk '
-      BEGIN{ok=0;done=0;fail=0;get=0}
-      /^STATUS:OK/ {ok++}
-      /^STATUS:DONE/ {done++}
-      /^STATUS:FAIL/ {fail++}
-      /^STATUS:GET/ {get++}
-      END{
-        printf("GET=%d DONE=%d OK=%d FAIL=%d\n", get, done, ok, fail)
-      }' "$log"
+    local n_get n_done n_ok n_fail
+    n_get=$(grep -c '^STATUS:GET'  "$log_r" || true)
+    n_done=$(grep -c '^STATUS:DONE' "$log_r" || true)
+    n_ok=$(grep -c  '^STATUS:OK'   "$log_r" || true)
+    n_fail=$(grep -c '^STATUS:FAIL' "$log_r" || true)
+    log "  Round ${r} summary: GET=${n_get} DONE=${n_done} OK=${n_ok} FAIL=${n_fail}"
 
-    # Stop if nothing failed
     if [[ ! -s "$next_fail" ]]; then
-      echo "[INFO] All downloads complete after round ${r}."
+      log "  All downloads complete after round ${r}."
       break
     fi
 
-    # Optional: exponential backoff between rounds (5s, 10s, 20s, ...)
     local sleep_s=$(( 5 * (2 ** (r-1)) ))
-    # Cap the sleep to something reasonable (e.g. 300s) in long runs
     (( sleep_s > 300 )) && sleep_s=300
-    echo "[INFO] Sleeping ${sleep_s}s before next round \(to ease 503/429 throttling\) ..."
+    log "  Sleeping ${sleep_s}s before round $((r+1)) (rate-limit backoff)..."
     sleep "$sleep_s"
     (( r++ ))
   done
 
-  # Write a final failure list (if any)
-  if [[ -s "$next_fail" ]]; then
+  if [[ -n "$next_fail" && -s "$next_fail" ]]; then
     cp -f "$next_fail" "${workdir}/download_failures.final.txt"
-    echo "[WARN] Some URLs still failed after ${max_rounds} rounds:"
-    echo "       see ${workdir}/download_failures.final.txt"
+    log "  [WARN] Persistent failures: ${workdir}/download_failures.final.txt"
   else
-    echo "[INFO] No remaining failures."
+    log "  No remaining failures."
   fi
-
-  echo "[INFO] Logs: ${state}/wget.r*.log; joblogs: ${state}/parallel.r*.joblog"
 }
 
-# Run with defaults (workdir=refseq, rounds=10, jobs=8, delay=0.25s)
-download_refseq_polite "$workdir" 10 "$threeds" 0.25 "${refseq_URLs}"
+download_refseq_polite "$workdir" 10 "$threeds" 0.25 "$refseq_URLs"
 
-echo " + 2 +   get RefSeq ( _ ) accession-taxid listings - (large) 10m?------"
-# These files are very large.
-# accessions you expect in FASTA deflines are in nucl_gb and nucl_wgs
-wget -O "$workdir/nucl_gb.accession2taxid.gz" \
-  https://ftp.ncbi.nih.gov/pub/taxonomy/accession2taxid/nucl_gb.accession2taxid.gz >> $workdir/wgetlog2.temp 2>&1
-# nucl_wgs
-wget -O "$workdir/nucl_wgs.accession2taxid.gz" \
-  https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/accession2taxid/nucl_wgs.accession2taxid.gz >> $workdir/wgetlog3.temp 2>&1
-# Build a single versioned_accession -> taxid map from the gz files
-zgrep "_" $workdir/nucl_*.accession2taxid.gz \
-  | cut -f 2-3 > $workdir/accession_taxid_nucl-rs.map
+log "  Downloaded .fna.gz count: $(ls "$workdir"/*_genomic.fna.gz 2>/dev/null | wc -l)"
 
-# Build "accession" → "file" map from your downloaded FASTAs
-echo " + 3 +    list accession -> fasta-file pairs - (stream) 3m  --------"
-# We want: accession<TAB>file_path
-accession_filename () {
-  # $1 = gz fasta file path
-  zcat $1 | awk -v filen=$1 '/^>/ {print substr($1, 2), "\t", filen}'
-}
-export -f accession_filename
+# =============================================================================
+# STEP 4 — Download accession-to-taxid maps
+# =============================================================================
+log "STEP 4: Download accession-to-taxid maps"
 
-# Run in parallel over all *genomic.fna.gz
-# (Keep order optional; we just want all pairs.)
-# threeds=20
-parallel --keep-order -j $threeds \
-   accession_filename {} \
-   ::: "${workdir}"/*genomic.fna.gz > "$workdir/accession_fqpath-rs.map"
+for pair in \
+    "nucl_gb.accession2taxid.gz|https://ftp.ncbi.nih.gov/pub/taxonomy/accession2taxid/nucl_gb.accession2taxid.gz" \
+    "nucl_wgs.accession2taxid.gz|https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/accession2taxid/nucl_wgs.accession2taxid.gz"; do
+  fname="${pair%%|*}"
+  url="${pair##*|}"
+  dest="${workdir}/${fname}"
+  if [[ -s "$dest" ]]; then
+    log "  Found existing: $dest — skipping"
+  else
+    log "  Downloading: $dest"
+    wget -q -O "$dest" "$url" 2>>"$LOG" || log "  [WARN] Failed to download $url"
+  fi
+done
 
-# Join maps (versioned accession) → taxid + path
-echo " + 4 +   sort & join two lists by accession - 3m ---(ignore 9606 error)-"
-# Left join on accession.version (field 1 in both maps)
-# We want: taxid<TAB>file_path
-time join -j 1 -e XXXcatastrophotronXXXX -o 1.2,2.2 \
-  <( sort "$workdir/accession_taxid_nucl-rs.map" ) \
-  <( sort "$workdir/accession_fqpath-rs.map" ) \
-  | tr " " "\t" \
-  | sort -u > "$workdir/taxid_fqpath.map"
+log "STEP 4b: Build versioned_accession → taxid map"
+acc_taxid_map="${workdir}/accession_taxid_nucl-rs.map"
+if [[ -s "$acc_taxid_map" ]]; then
+  log "  Found existing: $acc_taxid_map — skipping"
+else
+  zgrep "_" "$workdir"/nucl_*.accession2taxid.gz \
+    | cut -f2-3 > "$acc_taxid_map"
+  log "  Map entries: $(wc -l < "$acc_taxid_map")"
+fi
 
-# Re‑stamp headers to >taxid|description (idempotent, streaming)
-echo " + 5 +   re-stamp headers - 30m  --------------------------------"
+# =============================================================================
+# STEP 5 — Build accession → filepath map
+# =============================================================================
+log "STEP 5: Build accession → filepath map"
+acc_fqpath_map="${workdir}/accession_fqpath-rs.map"
+if [[ -s "$acc_fqpath_map" ]]; then
+  log "  Found existing: $acc_fqpath_map — skipping"
+else
+  accession_filename() {
+    zcat "$1" | awk -v f="$1" '/^>/{print substr($1,2) "\t" f}'
+  }
+  export -f accession_filename
+  parallel --keep-order -j "$threeds" \
+    accession_filename {} \
+    ::: "$workdir"/*_genomic.fna.gz \
+    > "$acc_fqpath_map"
+  log "  Accession-path pairs: $(wc -l < "$acc_fqpath_map")"
+fi
+
+# =============================================================================
+# STEP 6 — Join maps → taxid_fqpath.map
+# =============================================================================
+log "STEP 6: Join accession maps → taxid_fqpath.map"
+taxid_fqpath="${workdir}/taxid_fqpath.map"
+if [[ -s "$taxid_fqpath" ]]; then
+  log "  Found existing: $taxid_fqpath — skipping"
+else
+  join -j1 -e MISSING -o 1.2,2.2 \
+    <(sort "$acc_taxid_map") \
+    <(sort "$acc_fqpath_map") \
+    | tr ' ' '\t' \
+    | sed 's|\t\./|\t|' \
+    | sed 's|//|/|g' \
+    | sort -u > "$taxid_fqpath"
+  log "  taxid-filepath entries: $(wc -l < "$taxid_fqpath")"
+fi
+
+# =============================================================================
+# STEP 7 — Stamp taxID headers (parallel, single-pass via pigz)
+# =============================================================================
+log "STEP 7: Stamp taxID into FASTA headers"
 
 _stamp_job() {
   local taxid="$1"
   local src="$2"
   local base
-  base="$(basename "${src%.fna.gz}")"
+  base="$(basename "${src%_genomic.fna.gz}")"
   local out="${src%_genomic.fna.gz}_genomic_taxID2.fna.gz"
 
-  # Skip if already present and non-empty
   if [[ -s "$out" ]]; then
-    echo "[INFO] Skipping ${base} — output already exists."
+    echo "[INFO] Skipping ${base} — output exists"
     return 0
   fi
 
-  echo "[INFO] Stamping ${base} with taxid ${taxid}..."
   gzip -dc "$src" \
     | sed -E "s/^>/>$taxid|/" \
     | pigz -p 2 -c \
     > "$out" \
-  && echo "[INFO] Done: $(basename "$out")" \
+  && echo "[INFO] Stamped: $(basename "$out")" \
   || { echo "[ERROR] Failed: $src" >&2; return 1; }
 }
 export -f _stamp_job
 
-parallel --colsep "\t" -j "$threeds" \
+parallel --colsep '\t' -j "$threeds" \
   _stamp_job {1} {2} \
-  :::: "$workdir/taxid_fqpath.map" \
-  >> "$workdir/stamplog.temp" 2>&1
+  :::: "$taxid_fqpath" \
+  >> "${workdir}/stamplog.temp" 2>&1
 
-echo " +-6-+   done. NOTE :: use the '-r nt' flag with CCMetagen.py  __________"
+log "  Stamped .fna.gz count: $(ls "$workdir"/*_taxID2.fna.gz 2>/dev/null | wc -l)"
+
+# =============================================================================
+# STEP 8 — Audit: cross-reference .fna.gz, taxid_fqpath.map, and stamped outputs
+# =============================================================================
+log "STEP 8: Audit — cross-reference files vs maps"
+audit_file="${workdir}/audit.txt"
+
+awk -F'\t' '
+  NR==FNR {
+    n = split($1, a, "/"); on_disk[a[n]] = $1; next
+  }
+  {
+    path = $2; gsub(/\/\//, "/", path)
+    n = split(path, a, "/"); base = a[n]
+    in_map[base] = path; taxid[base] = $1
+  }
+  END {
+    for (b in in_map) if (!(b in on_disk)) print "MAP_NO_FILE\t" taxid[b] "\t" in_map[b]
+    for (b in on_disk) if (!(b in in_map)) print "FILE_NO_MAP\t\t" on_disk[b]
+  }
+' <(ls "$workdir"/*_genomic.fna.gz 2>/dev/null) "$taxid_fqpath" \
+  | sort > "$audit_file"
+
+n_map_no_file=$(grep -c '^MAP_NO_FILE' "$audit_file" || true)
+n_file_no_map=$(grep -c '^FILE_NO_MAP' "$audit_file" || true)
+log "  In map but missing on disk  : $n_map_no_file"
+log "  On disk but missing from map: $n_file_no_map"
+cat "$audit_file" >> "$LOG"
+
+# =============================================================================
+# STEP 9 — Resolve unmapped genomes via NCBI eutils
+# =============================================================================
+log "STEP 9: Resolve unmapped genomes via NCBI eutils"
+
+missing_gcf="${workdir}/missing_gcf_accessions.txt"
+missing_taxids="${workdir}/missing_taxids.txt"
+residual_map="${workdir}/taxid_fqpath.residual_fs.map"
+: > "$residual_map"
+
+if [[ "$n_file_no_map" -gt 0 ]]; then
+  # Extract GCF accession from FILE_NO_MAP lines
+  awk '$1=="FILE_NO_MAP"{print $3}' "$audit_file" \
+    | sed 's|.*/||; s/_[^_]*_genomic\.fna\.gz$//' \
+    | sort -u > "$missing_gcf"
+  log "  Unmapped GCF accessions: $(wc -l < "$missing_gcf")"
+
+  # Peek at accessions inside unmapped files
+  log "  Checking accessions inside unmapped files:"
+  while IFS= read -r f; do
+    echo "=== $(basename "$f") ===" >> "$LOG"
+    zcat "$f" | grep '^>' | head -3 >> "$LOG"
+  done < <(awk '$1=="FILE_NO_MAP"{print $3}' "$audit_file")
+
+  # Fetch taxids from NCBI eutils
+  log "  Fetching taxids from NCBI eutils (polite: 0.4s delay)..."
+  : > "$missing_taxids"
+  while IFS= read -r gcf; do
+    uid=$(curl -s \
+      "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=assembly&term=${gcf}&retmode=json&email=${NCBI_EMAIL}" \
+      | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+ids=d.get('esearchresult',{}).get('idlist',[])
+print(ids[0] if ids else '')
+" 2>/dev/null)
+
+    if [[ -z "$uid" ]]; then
+      echo -e "NA\t$gcf" >> "$missing_taxids"
+      sleep 0.4; continue
+    fi
+
+    tax=$(curl -s \
+      "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=assembly&id=${uid}&retmode=json&email=${NCBI_EMAIL}" \
+      | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+r=d.get('result',{})
+u=r.get('uids',[])
+print(r[u[0]].get('taxid','NA') if u else 'NA')
+" 2>/dev/null)
+
+    echo -e "$tax\t$gcf" >> "$missing_taxids"
+    sleep 0.4
+  done < "$missing_gcf"
+
+  log "  Taxids resolved: $(grep -v '^NA' "$missing_taxids" | wc -l) / $(wc -l < "$missing_taxids")"
+
+  # Build residual taxid → filepath entries
+  while IFS=$'\t' read -r taxid gcf; do
+    [[ "$taxid" == "NA" || -z "$taxid" ]] && {
+      log "  [WARN] No taxid for $gcf — skipping"
+      continue
+    }
+    fpath=$(ls "$workdir/${gcf}_"*_genomic.fna.gz 2>/dev/null | head -1 || true)
+    if [[ -n "$fpath" ]]; then
+      echo -e "$taxid\t$fpath" >> "$residual_map"
+    else
+      log "  [WARN] File not found for $gcf"
+    fi
+  done < "$missing_taxids"
+
+  log "  Residual map entries: $(wc -l < "$residual_map")"
+
+  # Stamp the residual genomes
+  if [[ -s "$residual_map" ]]; then
+    log "  Stamping residual genomes..."
+    parallel --colsep '\t' -j "$threeds" \
+      _stamp_job {1} {2} \
+      :::: "$residual_map" \
+      >> "${workdir}/stamplog.residual.temp" 2>&1
+  fi
+else
+  log "  No unmapped genomes — skipping eutils lookup."
+fi
+
+# =============================================================================
+# STEP 10 — Final stamp audit
+# =============================================================================
+log "STEP 10: Final stamp audit"
+n_fna_gz=$(ls "$workdir"/*_genomic.fna.gz 2>/dev/null | wc -l || echo 0)
+n_stamped=$(ls "$workdir"/*_taxID2.fna.gz  2>/dev/null | wc -l || echo 0)
+n_unstamped=$(( n_fna_gz - n_stamped ))
+log "  Input  .fna.gz    : $n_fna_gz"
+log "  Stamped _taxID2.fna.gz: $n_stamped"
+log "  Unstamped          : $n_unstamped"
+
+# Find any remaining unstamped files
+unstamped_list="${workdir}/unstamped.txt"
+for f in "$workdir"/*_genomic.fna.gz; do
+  expected="${f%_genomic.fna.gz}_genomic_taxID2.fna.gz"
+  [[ ! -s "$expected" ]] && echo "$f"
+done > "$unstamped_list"
+n_truly_missing=$(wc -l < "$unstamped_list")
+log "  Still missing stamped output: $n_truly_missing"
+if [[ $n_truly_missing -gt 0 ]]; then
+  log "  [WARN] See: $unstamped_list"
+fi
+
+# =============================================================================
+# STEP 11 — Merge all stamped FASTA into one file for CCMetagen/KMA
+# =============================================================================
+if [[ "$SKIP_MERGE" == "1" ]]; then
+  log "STEP 11: SKIP_MERGE=1 — skipping merge"
+else
+  log "STEP 11: Merge all *_taxID2.fna.gz into single FASTA for KMA indexing"
+  merged="${workdir}/refseq_ccmetagen.fna.gz"
+
+  if [[ -s "$merged" ]]; then
+    log "  Found existing merged file: $merged — skipping"
+  else
+    n_to_merge=$(ls "$workdir"/*_taxID2.fna.gz 2>/dev/null | wc -l || echo 0)
+    log "  Merging $n_to_merge files → $merged"
+    t0=$(date +%s)
+    cat "$workdir"/*_taxID2.fna.gz > "$merged"
+    t1=$(date +%s)
+    merged_size=$(du -sh "$merged" | cut -f1)
+    log "  Merge complete: ${merged_size} in $(( t1-t0 ))s"
+    log "  Sequence count: $(zgrep -c '^>' "$merged")"
+  fi
+fi
+
+# =============================================================================
+# STEP 12 — Cleanup intermediates
+# =============================================================================
+if [[ "$KEEP_INTERMEDIATES" == "1" ]]; then
+  log "STEP 12: KEEP_INTERMEDIATES=1 — retaining all files"
+else
+  log "STEP 12: Cleaning intermediate files"
+
+  # Verify merge exists and is non-empty before removing sources
+  merged="${workdir}/refseq_ccmetagen.fna.gz"
+  if [[ ! -s "$merged" && "$SKIP_MERGE" != "1" ]]; then
+    log "  [WARN] Merged file missing or empty — NOT removing intermediates"
+  else
+    # Remove per-genome source .fna.gz (originals)
+    log "  Removing *_genomic.fna.gz source files..."
+    find "$workdir" -maxdepth 1 -name '*_genomic.fna.gz' \
+      ! -name '*_taxID2*' -delete
+    log "  Removing *_taxID2.fna.gz (already merged)..."
+    find "$workdir" -maxdepth 1 -name '*_taxID2.fna.gz' -delete
+    # Remove per-round download logs (keep summary log)
+    log "  Removing per-round download logs..."
+    rm -rf "${workdir}/_dl" || true
+    log "  Cleanup complete. Retained:"
+    log "    $merged        (merged CCMetagen FASTA)"
+    log "    $taxid_fqpath  (taxid map)"
+    log "    $acc_taxid_map (accession map)"
+    log "    $LOG           (this log)"
+    log "    ${workdir}/audit.txt"
+    log "    ${workdir}/download_failures.final.txt (if any)"
+    log "    ${workdir}/missing_*.txt (if any)"
+  fi
+fi
+
+# =============================================================================
+log "======================================================================"
+log "DONE: $(ts)"
+log "  Merged FASTA for KMA: ${workdir}/refseq_ccmetagen.fna.gz"
+log "  Full log: $LOG"
+log "======================================================================"

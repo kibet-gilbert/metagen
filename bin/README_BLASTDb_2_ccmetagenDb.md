@@ -1,40 +1,40 @@
-# **Buildind CCMetagen database from *core_nt* or*nt* NCBI BLAST database**
+# **Buildind CCMetagen database from *core_nt* or *nt* NCBI BLAST database**
 
 ---
 
 ## **Context:**  
-We need a ccmetagen database built from NCBI's nt or core_nt databases. It will be used in analysing sequence data containing both DNA and RNA from all organisms. While preparing the database we need to exclude redundant sequences
+The aim is to build a ccmetagen database from NCBI's nt or core_nt databases.   
+The databases will be used in the analysis of sequence data from either DNA and RNA or both originating from any mix of organism species.   
+As part of the creation of this databases we however need to exclude redundant sequences.
 
  - Redundancy removal requires **sequence‑level or taxonomy‑level filtering**
  - With DNA + RNA from all organisms, your combined nt/core\_nt export will include:
 
-*   Genomic DNA
-*   Transcript variants (RNA)
-*   Predicted mRNAs (XM, XR, XP)
-*   Alternative isoforms
-*   Pseudogenes
-*   Partial fragments
-*   Redundant clones
-*   Overlapping assemblies from different submitters
-*   Contaminants
+> 1. Genomic DNA
+> 2. Transcript variants (RNA)
+> 3. Predicted mRNAs (XM, XR, XP)
+> 4. Alternative isoforms
+> 5. Pseudogenes
+> 6. Partial fragments
+> 7. Redundant clones
+> 8. Overlapping assemblies from different submitters
+> 9. Contaminants
 
 These **explode redundancy**, slow KMA, and inflate false positives.
 
 ---
 
-## **Redundancy should be removed using:**
+## **Redundancy can be removed using:**
 
-### ✔ **Sequence-level filtering**
+### ✔ **Sequence-level filtering**    
+   - **deduplication** (exact): `seqkit rmdup -s -i`
+   - **clustering** (90–100%): `vsearch --cluster_fast`
+   - **low-complexity masking**: `dustmasker`, `sdust`
 
-*   **deduplication** (exact): `seqkit rmdup -s -i`
-*   **clustering** (90–100%): `vsearch --cluster_fast`
-*   **low-complexity masking**: `dustmasker`, `sdust`
-
-### ✔ **Taxonomy-level filtering**
-
-*   Exclude host clades (e.g., Vertebrata, Mammalia)
-*   Exclude predicted mRNAs (`PREDICTED:`)
-*   Exclude unclassified/environmental sequences (`uncultured`, `metagenomic`, etc.)
+### ✔ **Taxonomy-level filtering**   
+   - Exclude host clades (e.g., Vertebrata, Mammalia)
+   - Exclude predicted mRNAs (`PREDICTED:`)
+   - Exclude unclassified/environmental sequences (`uncultured`, `metagenomic`, etc.)
 
 ---
 
@@ -42,53 +42,39 @@ These **explode redundancy**, slow KMA, and inflate false positives.
 
 This is crucial and should exclude:
 
-### **A. Host sequences** (unless you want host hits)
+### **A. Host sequences** (unless you want host hits)   
+These can be considered **non‑microbial**, may cause **false positives**, and waste disk/compute.
 
-Examples you gave:
+### **B. “PREDICTED:” entries (XM\_, XR\_, XP\_)**    
+These are computational mRNA/protein predictions that may lead to:    
+   - Redundant isoforms
+   - Partial transcripts
+   - Noisy for mapping
+   - Inflate multi-mappers
 
-    >PREDICTED: Peromyscus californicus...
-    >Giant Panda satellite DNA
-    >Bos taurus mRNA for bone Gla protein
+### **C. Environmental / unclassified / “uncultured” sequences**    
+   - `uncultured bacterium`
+   - `metagenome`
+   - `environmental sample`
 
-These are **non‑microbial**, cause **false positives**, and waste disk/compute.
+These add noise and non‑interpretable hits.   
 
-### **B. “PREDICTED:” entries (XM\_, XR\_, XP\_)**
-
-These are computational mRNA/protein predictions:
-
-*   Redundant isoforms
-*   Partial transcripts
-*   Noisy for mapping
-*   Inflate multi-mappers
-
-### **C. Environmental / unclassified / “uncultured” sequences**
-
-*   `uncultured bacterium`
-*   `metagenome`
-*   `environmental sample`
-
-These add noise and non‑interpretable hits.
-
-### **D. Partial fragments & tiny sequences**
-
+### **D. Partial fragments & tiny sequences**    
 Filter out sequences <200–300 nt.
 
-### **E. Patents, vectors, adaptors**
-
-Often labeled as:
-
-*   “vector”
-*   “clone”
-*   “synthetic construct”
-*   “patented DNA”
+### **E. Patents, vectors, adaptors**    
+Often labeled as:   
+   - “vector”
+   - “clone”
+   - “synthetic construct”
+   - “patented DNA”
 
 ---
 
-## **Recommended workflow for a high-quality CCMetagen database**
+## **Recommended workflow for a high-quality CCMetagen database**    
 
-### **Step 1: Export from nt/core\_nt**
-
-(Use fixed outfmt string)
+### **Step 1: Export from nt/core\_nt**    
+(Use fixed outfmt string)   
 
 ```bash
 blastdbcmd -db nt \
@@ -101,10 +87,10 @@ blastdbcmd -db nt \
 
 Exclude:
 
-*   Vertebrata (7742)
-*   Metazoa (33208)
-*   Embryophyta (3193)
-*   Any host species
+   - Vertebrata (7742)
+   - Metazoa (33208)
+   - Embryophyta (3193)
+   - Any host species
 
 Using taxonkit or direct lists:
 
