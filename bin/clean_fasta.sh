@@ -33,6 +33,14 @@
 # =============================================================================
 set -Eeuo pipefail
 
+on_error() {
+  local exit_code=$?
+  local line_no=$1
+  echo "Error: exit code ${exit_code} at line ${line_no}" >&2
+}
+
+trap 'on_error $LINENO' ERR
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 MIN_LEN="${MIN_LEN:-300}"
 MASK_LOW_COMPLEX="${MASK_LOW_COMPLEX:-1}"

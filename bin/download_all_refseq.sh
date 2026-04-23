@@ -19,13 +19,21 @@
 # =============================================================================
 set -Eeuo pipefail
 
+on_error() {
+  local exit_code=$?
+  local line_no=$1
+  echo "Error: exit code ${exit_code} at line ${line_no}" >&2
+}
+
+trap 'on_error $LINENO' ERR
+
 # ── User settings ─────────────────────────────────────────────────────────────
 workdir="${1:-refseq}"
 threeds="${2:-20}"
 want_rep="${3:-0}"
 KEEP_INTERMEDIATES="${KEEP_INTERMEDIATES:-0}"
 SKIP_MERGE="${SKIP_MERGE:-0}"
-NCBI_EMAIL="${NCBI_EMAIL:-${USER}@ilri.org}"
+NCBI_EMAIL="${NCBI_EMAIL:-${USER}@cgiar.org}"
 
 [[ -z "$workdir" ]] && { echo "[ERROR] Provide a destination folder"; exit 1; }
 [[ -z "$threeds" ]] && threeds=20

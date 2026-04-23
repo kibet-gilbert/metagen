@@ -22,6 +22,15 @@
 # =============================================================================
 set -Eeuo pipefail
 
+on_error() {
+  local exit_code=$?
+  local line_no=$1
+  echo "Error: exit code ${exit_code} at line ${line_no}" >&2
+}
+
+trap 'on_error $LINENO' ERR
+# =============================================================================
+
 HEADER_FMT="${HEADER_FMT:->%T|%t\n%s}"
 THREADS="${THREADS:-4}"
 COMPRESS="${COMPRESS:-1}"

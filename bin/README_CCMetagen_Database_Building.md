@@ -181,7 +181,8 @@ core_nt_export/
 
 ### A3. Clean FASTA — Module 2: `clean_fasta.sh`
 
-This script takes the raw exported FASTA and applies four sequential cleaning steps. It accepts both plain and gzip-compressed input, and works on BLAST exports **or** the merged RefSeq output from `download_all_refseq.sh`.
+This script takes the raw exported FASTA and applies four sequential cleaning steps. It accepts both plain and gzip-compressed input, and works on BLAST exports **or** the merged RefSeq output from `download_all_refseq.sh`.    
+**Dependencies:** `seqkit`, `blast`(`dustmasker`) and `pigz/gzip`.   
 
 ```bash
 # Syntax
