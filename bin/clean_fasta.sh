@@ -166,6 +166,7 @@ log "  After title filter: $(count_fa "$STEP1")"
 
 # ── STEP 2: Length filter ─────────────────────────────────────────────────────
 log "Step 2/4: Length filter (>= ${MIN_LEN} nt)"
+#[WARN] you may switch on flag -g/--remove-gaps to remove spaces
 seqkit seq -j "$THREADS" -m "$MIN_LEN" "$STEP1" > "$STEP2"
 log "  After length filter: $(count_fa "$STEP2")"
 

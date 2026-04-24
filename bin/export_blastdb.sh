@@ -98,14 +98,23 @@ if [[ "$COMPRESS" == "1" ]]; then
   blastdbcmd -db "$DB_PREFIX" \
     -entry all \
     -outfmt $"$HEADER_FMT" \
+    | sed 's/\\n/\n/g' \
     | $PZIP -p "$THREADS" \
     > "$RAW_FASTA"
 else
   blastdbcmd -db "$DB_PREFIX" \
     -entry all \
     -outfmt $"$HEADER_FMT" \
+    | sed 's/\\n/\n/g' \
     > "$RAW_FASTA"
 fi
+
+# ── Veryfiy sequence Header format ────────────────────────────────────────────
+# After export, verify sequences are multi-line (not one-liners)
+if zcat "$RAW_FASTA" 2>/dev/null | head -20 | grep -q '\\n'; then
+  die "Export produced literal \\n in sequences — pipe through: sed 's/\\\\n/\\n/g'"
+fi
+log "  Format check: sequences are correctly multi-line ✓"
 
 t1=$(date +%s)
 log "Export complete: $((t1 - t0))s"
