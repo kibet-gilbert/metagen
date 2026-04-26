@@ -181,7 +181,8 @@ core_nt_export/
 
 ### A3. Clean FASTA — Module 2: `clean_fasta.sh`
 
-This script takes the raw exported FASTA and applies four sequential cleaning steps. It accepts both plain and gzip-compressed input, and works on BLAST exports **or** the merged RefSeq output from `download_all_refseq.sh`.
+This script takes the raw exported FASTA and applies four sequential cleaning steps. It accepts both plain and gzip-compressed input, and works on BLAST exports **or** the merged RefSeq output from `download_all_refseq.sh`.    
+**Dependencies:** `seqkit`, `blast`(`dustmasker`) and `pigz/gzip`.   
 
 ```bash
 # Syntax
@@ -227,11 +228,12 @@ Short sequences (<300 nt) produce unreliable taxonomic assignments and inflate m
 
 **Step 3 — Deduplication (`seqkit rmdup -s -i`)**
 
-Removes sequences with identical nucleotide content regardless of header. Identical sequences from different submitters (common in nt) inflate database size without adding information. A list of removed duplicates is written to `duplicates.txt` for audit.
+Removes sequences with identical nucleotide content regardless of header OR sequence length. Identical sequences from different submitters (common in nt) inflate database size without adding information. A list of removed duplicates is written to `duplicates.txt` for audit.   
+**WARNING:** This needs to be done with consideration. The concern is when one has multiple *exactly similar* sequences from different organisms, which may cause wrong taxonomic assignment because only the first sequence/ID/Taxa is retained by `seqkit -rmdup`. In CCMetagen case this is not necessary, and is recommended to set `DEDUP_SEQUENCES=0`. 
 
 **Step 4 — Low-complexity masking (`dustmasker`, optional)**
 
-Masks repetitive / low-complexity regions (poly-A tails, simple repeats, satellite sequences) to uppercase `N`. This prevents these regions from driving alignment scores and causing spurious hits. Disable with `MASK_LOW_COMPLEX=0` if you need exact sequences preserved.
+Masks repetitive / low-complexity regions (poly-A tails, simple repeats, satellite sequences) to uppercase `N`. This prevents these regions from driving alignment scores and causing spurious hits. For CCMetagen workflow it is recommended to disable with `MASK_LOW_COMPLEX=0` as exact sequences can be preserved and won't be of consequence.
 
 **Output:**
 ```
@@ -248,6 +250,7 @@ core_nt_clean/
 |----------|---------|-------------|
 | `MIN_LEN` | 300 | Minimum sequence length (nt) |
 | `MASK_LOW_COMPLEX` | 1 | 1=run dustmasker, 0=skip |
+| `DEDUP_SEQUENCES` | 1 | 1=run seqkit rmdup, 0=skip |
 | `COMPRESS_FINAL` | 1 | 1=gzip output, 0=plain FASTA |
 | `KEEP_INTERMEDIATE` | 0 | 1=keep step-by-step tmp files |
 | `THREADS` | 4 | Threads for seqkit/pigz |

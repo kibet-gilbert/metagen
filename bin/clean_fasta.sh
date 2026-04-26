@@ -27,6 +27,7 @@
 # Environment overrides:
 #   MIN_LEN=300              minimum sequence length (default: 300)
 #   MASK_LOW_COMPLEX=1       1=run dustmasker (default); 0=skip
+#   DEDUP_SEQUENCES=0        1=Filter Duplicate Sequences (default); 0=skip
 #   COMPRESS_FINAL=1         1=gzip output (default); 0=plain
 #   KEEP_INTERMEDIATE=0      1=keep tmp files; 0=delete (default)
 #   THREADS=4                threads for seqkit / pigz
@@ -43,7 +44,8 @@ trap 'on_error $LINENO' ERR
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 MIN_LEN="${MIN_LEN:-300}"
-MASK_LOW_COMPLEX="${MASK_LOW_COMPLEX:-1}"
+MASK_LOW_COMPLEX="${MASK_LOW_COMPLEX:-0}"
+DEDUP_SEQUENCES="${DEDUP_SEQUENCES:-0}"
 COMPRESS_FINAL="${COMPRESS_FINAL:-1}"
 KEEP_INTERMEDIATE="${KEEP_INTERMEDIATE:-0}"
 THREADS="${THREADS:-4}"
@@ -58,6 +60,7 @@ Usage: $0 <input.fasta[.gz]> [outdir]
 Environment:
   MIN_LEN=${MIN_LEN}
   MASK_LOW_COMPLEX=${MASK_LOW_COMPLEX}   (1=dustmasker, 0=skip)
+  DEDUP_SEQUENCES=${DEDUP_SEQUENCES}     (1=sedkit rmdup, 0=skip)
   COMPRESS_FINAL=${COMPRESS_FINAL}       (1=gzip, 0=plain)
   KEEP_INTERMEDIATE=${KEEP_INTERMEDIATE} (1=keep tmp, 0=delete)
   THREADS=${THREADS}
@@ -133,16 +136,18 @@ trap cleanup EXIT
   echo "OUTDIR     : $OUTDIR"
   echo "MIN_LEN    : $MIN_LEN"
   echo "MASK       : $MASK_LOW_COMPLEX"
+  echo "DEDUPLICATE: $DEDUP_SEQUENCES"
   echo "COMPRESS   : $COMPRESS_FINAL"
   echo "THREADS    : $THREADS"
   echo "======================================================================"
 } | tee -a "$LOG"
 
-log "Input sequences: $(count_fa "$INPUT")"
+n_INPUT=$(count_fa "$INPUT")
+log "Input sequences: ${n_INPUT}"
 
 # ── STEP 1: Title filtering ───────────────────────────────────────────────────
 log "Step 1/4: Title filtering"
-log "  Dropping: PREDICTED | vector | synthetic construct | cloning | patent | uncultured | environmental sample | metagenome"
+log "  Dropping: vector | synthetic construct | cloning | patent | metagenome"
 
 export LC_ALL=C
 
@@ -158,39 +163,61 @@ cat_fa "$INPUT" \
 # Simpler streaming approach that handles multi-line FASTA:
 cat_fa "$INPUT" \
   | awk 'BEGIN{RS=">"; ORS=""} NR>1 {print ">"$0}' \
-  | grep -Eiv 'PREDICTED:|vector|synthetic construct|cloning|patent|uncultured|environmental sample|metagenome' \
+  | grep -Eiv 'vector|synthetic construct|cloning|patent|metagenome' \
   | awk 'BEGIN{RS=">"; ORS=""} NR>1 {print ">"$0}' \
   > "$STEP1"
 
-log "  After title filter: $(count_fa "$STEP1")"
+n_STEP1=$(count_fa "$STEP1")
+log "  After title filter: ${n_STEP1}"
 
 # ── STEP 2: Length filter ─────────────────────────────────────────────────────
 log "Step 2/4: Length filter (>= ${MIN_LEN} nt)"
 #[WARN] you may switch on flag -g/--remove-gaps to remove spaces
 seqkit seq -j "$THREADS" -m "$MIN_LEN" "$STEP1" > "$STEP2"
-log "  After length filter: $(count_fa "$STEP2")"
+n_STEP2=$(count_fa "$STEP2")
+log "  After length filter: ${n_STEP}2"
 
 # ── STEP 3: Deduplicate ───────────────────────────────────────────────────────
-log "Step 3/4: Deduplicate identical sequences (seqkit rmdup -s -i)"
+log "Step 3/4: Identify identical sequences (seqkit rmdup -s -i)"
+# Run once
 seqkit rmdup -j "$THREADS" -s -i "$STEP2" \
+  --id-regexp '^([^|]+\|[A-Za-z.]+(?:\s+[A-Za-z]+)?)' \
   -d "${OUTDIR}/duplicates.txt" \
   -D "${OUTDIR}/duplicate_seqids.txt" \
   > "$STEP3"
-n_removed=$(( $(count_fa "$STEP2") - $(count_fa "$STEP3") ))
-log "  After dedup: $(count_fa "$STEP3") (removed ${n_removed} duplicates)"
+
+# Precompute counts (avoid repeated expensive calls)
+n_STEP3=$(count_fa "$STEP3")
+n_duplicates=$(( n_STEP2 - n_STEP3 ))
+
+if [[ "$DEDUP_SEQUENCES" == "1" ]]; then
+  log "  Deduplicated identical sequences"
+  log "  After dedup: ${n_STEP3} (removed ${n_duplicates} duplicates)"
+  STEP4_INPUT=$STEP3
+  n_STEP4_INPUT=${n_STEP3}
+else
+  log "  Deduplication skipped (reporting only)"
+  log "  Found ${n_duplicates} duplicates)"
+  STEP4_INPUT=$STEP2
+  n_STEP4_INPUT=${n_STEP2}
+fi
 log "  Duplicate details: ${OUTDIR}/duplicates.txt"
 
 # ── STEP 4: Low-complexity masking ───────────────────────────────────────────
 if [[ "$MASK_LOW_COMPLEX" == "1" ]]; then
   log "Step 4/4: Low-complexity masking (dustmasker → hard-mask lowercase → N)"
-  dustmasker -in "$STEP3" -outfmt fasta \
-    | sed 's/[a-z]/N/g' \
+  dustmasker -in "$STEP4_INPUT" -outfmt fasta \
+    | awk '
+        /^>/ {print; next}
+        {gsub(/[a-z]/,"N"); print}
+      ' \
     > "$STEP4"
-  log "  Masking complete: $(count_fa "$STEP4")"
+  n_STEP4=$(count_fa "$STEP4")
+  log "  Masking complete: ${n_STEP4}"
   PRE_COMPRESS="$STEP4"
 else
   log "Step 4/4: Masking skipped (MASK_LOW_COMPLEX=0)"
-  PRE_COMPRESS="$STEP3"
+  PRE_COMPRESS="$STEP4_INPUT"
 fi
 
 # ── Compress and write final ──────────────────────────────────────────────────
@@ -202,19 +229,20 @@ else
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
-n_final=$(count_fa "$FINAL")
+n_final=${n_STEP4}
 sz_final=$(du -sh "$FINAL" | cut -f1)
 
 {
   echo "======================================================================"
   echo "clean_fasta.sh SUMMARY"
-  echo "Input sequences   : $(count_fa "$INPUT")"
-  echo "After title filter: $(count_fa "$STEP1")"
-  echo "After length (${MIN_LEN}): $(count_fa "$STEP2")"
-  echo "After dedup       : $(count_fa "$STEP3")"
-  echo "Final output      : $n_final sequences  ($sz_final)"
-  echo "Output file       : $FINAL"
-  echo "Finished          : $(ts)"
+  echo "Input sequences     : ${n_INPUT}"
+  echo "After title filter  : ${n_STEP1}"
+  echo "After length (${MIN_LEN}): ${n_STEP2}"
+  echo "After dedup         : ${n_STEP4_INPUT}"
+  echo "Duplicate sequences : ${n_duplicates}"
+  echo "Final output        : $n_final sequences  ($sz_final)"
+  echo "Output file         : $FINAL"
+  echo "Finished            : $(ts)"
   echo "======================================================================"
 } | tee -a "$LOG"
 
