@@ -168,9 +168,11 @@ See `build_gtdb_scg_kma.sh` for the automated version. The manual steps are:
 ### Step 1: Extract marker gene archives
 
 ```bash
-mkdir -p gtdb_scg/reps gtdb_scg/all
+mkdir -p gtdb_scg
 cd gtdb_scg/
-tar -xzf bac120_marker_genes_reps_r232.tar.gz -C ./
+tar -xzf bac120_marker_genes_reps_r232.tar.gz \
+    -C ./extract/ \
+    --wildcards '*.fna' --no-anchored
 ```
 
 ### Step 2: Filter marker metadata to high-quality SCGs
@@ -191,61 +193,46 @@ echo "High-quality markers: $(tail -n +2 bac120_hq_markers.tsv | wc -l) / 120"
 # Header format: >genome_accession
 # We normalise this to: >genome_accession|marker_id  for KMA compatibility
 
-mkdir -p gtdb_scg/merged
+RAW_FASTA="${OUTDIR}/gtdb_bac120_scg_${LABEL}.raw.fna"
+HEADER_MAP="${OUTDIR}/header_map.tsv"
 
-while IFS=$'\t' read -r marker_id name desc length sc_pct ubiq; do
-  [[ "$marker_id" == "Marker Id" ]] && continue
-  dir="gtdb_scg/reps/${marker_id}"
-  [[ ! -d "$dir" ]] && echo "[WARN] Missing: $dir" && continue
+# Build awk taxonomy lookup table then process all .fna files
+t0=$(date +%s)
 
-  # Merge all FASTA from this marker, normalising headers
-  for fasta in "$dir"/*.fna; do
-    [[ ! -f "$fasta" ]] && continue
-    # Rewrite headers: >genome~marker_copy → >genome|marker
-    awk -v mid="$marker_id" '
-      /^>/ {
-        split(substr($0,2), a, "~")
-        genome = a[1]
-        # Skip multi-copy instances (copy index > 1)
-        if (a[2] ~ /_[2-9]$/ || a[2] ~ /_[0-9][0-9]+$/) skip=1
-        else { skip=0; print ">" genome "|" mid }
-        next
-      }
-      !skip { print }
-    ' "$fasta"
-  done
+find "$EXTRACT_DIR" -type f -name '*.fna' -print0 \
+| python3 "$SCG_FASTA_BUILDER" \
+    --taxonomy "${OUTDIR}/taxonomy_map.tsv" \
+    --out-fasta "$RAW_FASTA" \
+    --header-map "$HEADER_MAP"
 
-done < bac120_hq_markers.tsv \
-  >> gtdb_scg/merged/bac120_scg_reps_hq.fna
-
-echo "Total sequences: $(grep -c '^>' gtdb_scg/merged/bac120_scg_reps_hq.fna)"
+echo "Total sequences: $(grep -c '^>' ${RAW_FASTA})"
 ```
 
 ### Step 4: Quality filter — remove multi-copy and short sequences
 
 ```bash
-# Remove sequences shorter than 75 bp (fragments)
-seqkit seq -m 75 gtdb_scg/merged/bac120_scg_reps_hq.fna \
-  > gtdb_scg/merged/bac120_scg_reps_hq_len75.fna
+# Remove sequences shorter than 100 bp (fragments)
+seqkit seq -m 100 ${RAW_FASTA} \
+  > ./bac120_scg_reps_hq_len100.fna
 
-echo "After length filter: $(grep -c '^>' gtdb_scg/merged/bac120_scg_reps_hq_len75.fna)"
+echo "After length filter: $(grep -c '^>' ./bac120_scg_reps_hq_len100.fna)"
 ```
 
 ### Step 5: Deduplicate
 
 ```bash
 seqkit rmdup -j 8 -s -i \
-  gtdb_scg/merged/bac120_scg_reps_hq_len75.fna \
-  > gtdb_scg/merged/bac120_scg_reps_hq_len75_dedup.fna
+  ./bac120_scg_reps_hq_len100.fna \
+  > ./bac120_scg_reps_hq_len100_dedup.fna
 
-echo "After dedup: $(grep -c '^>' gtdb_scg/merged/bac120_scg_reps_hq_len75_dedup.fna)"
+echo "After dedup: $(grep -c '^>' ./bac120_scg_reps_hq_len100_dedup.fna)"
 ```
 
 ### Step 6: Build KMA index
 
 ```bash
 kma index \
-  -i gtdb_scg/merged/bac120_scg_reps_hq_len75_dedup.fna \
+  -i ./bac120_scg_reps_hq_len100_dedup.fna \
   -o /export/data/kma_db/bac120_scg_reps_r232 \
   -verbose
 
