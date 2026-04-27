@@ -130,12 +130,12 @@ log "  Distinct genomes : $n_genomes"
 # Header format:  >genome
 #
 # This format enables three levels of downstream analysis:
-#   - Per-marker coverage  → extract file-basename before *.fna
-#   - Per-genome coverage  → extract header from file
+#   - Per-marker coverage  → extract field before '|', split on '~'
+#   - Per-genome coverage  → extract field before '~'
 #   - Per-taxon abundance  → extract field after '|', split on ';'
 #
 # Example:
-#   >RS_GCF_000001405.40
+#   >RS_GCF_000001405.40~TIGR00006|d__Bacteria;p__Pseudomonadota;g__Escherichia
 # =============================================================================
 log "STEP 2: Concatenating FASTA with KMA-compatible headers"
 RAW_FASTA="${OUTDIR}/gtdb_bac120_scg_${LABEL}.raw.fna"
