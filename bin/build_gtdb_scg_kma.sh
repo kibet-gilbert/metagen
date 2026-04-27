@@ -93,9 +93,10 @@ fi
 # STEP 1 — Extract nucleotide .fna files from archive
 # Archive structure:
 #   bac120_marker_genes_{reps|all}_r232/
-#       {MARKER_ID}/
-#           {genome_accession}_{MARKER_ID}.fna    (nucleotide)
-#           {genome_accession}_{MARKER_ID}.faa    (amino acid)
+#       {faa}/
+#           {MARKER_ID}.faa    (amino acid)
+#       {fna}/
+#           {MARKER_ID}.fna    (nucleotide)
 # We extract only .fna (nucleotide) for KMA read mapping.
 # =============================================================================
 log "STEP 1: Extracting .fna files from archive"
