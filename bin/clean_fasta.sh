@@ -175,7 +175,7 @@ log "Step 2/4: Length filter (>= ${MIN_LEN} nt)"
 #[WARN] you may switch on flag -g/--remove-gaps to remove spaces
 seqkit seq -j "$THREADS" -m "$MIN_LEN" "$STEP1" > "$STEP2"
 n_STEP2=$(count_fa "$STEP2")
-log "  After length filter: ${n_STEP}2"
+log "  After length filter: ${n_STEP2}"
 
 # ── STEP 3: Deduplicate ───────────────────────────────────────────────────────
 log "Step 3/4: Identify identical sequences (seqkit rmdup -s -i)"
