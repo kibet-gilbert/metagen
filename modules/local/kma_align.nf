@@ -166,7 +166,8 @@ process KMA_ALIGN {
     # ── Append sample metadata to .res header for downstream merging ─────
     # Inserts a comment line with meta fields before the column header
     meta_line="# sample=${meta.id} db=${db_name} mode=${mode} total_reads=${meta.total_reads ?: 'NA'} county=${meta.county ?: 'NA'} site=${meta.site ?: 'NA'} week=${meta.week ?: 'NA'}"
-    sed -i "1i\\\${meta_line}" ${prefix}.res
+    sed -i "1i\\${meta_line}" ${prefix}.res
+    # sed -i "1i\\\${meta_line}" ${prefix}.res
 
     echo "[INFO] Alignment complete: ${prefix}.res"
 
