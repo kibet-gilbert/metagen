@@ -42,7 +42,9 @@ on_error() {
 
 trap 'on_error $LINENO' ERR
 
+# =============================================================================
 # ── Defaults ──────────────────────────────────────────────────────────────────
+# =============================================================================
 MIN_LEN="${MIN_LEN:-300}"
 MASK_LOW_COMPLEX="${MASK_LOW_COMPLEX:-0}"
 DEDUP_SEQUENCES="${DEDUP_SEQUENCES:-0}"
@@ -73,7 +75,9 @@ OUTDIR="${2:-fasta_clean}"
 [[ ! -f "$INPUT" ]] && { echo "ERROR: Input not found: $INPUT"; exit 1; }
 mkdir -p "$OUTDIR"
 
+# =============================================================================
 # ── Logging ───────────────────────────────────────────────────────────────────
+# =============================================================================
 LOG="${OUTDIR}/clean_fasta.log"
 TMP="${OUTDIR}/.tmp"
 mkdir -p "$TMP"
@@ -86,12 +90,15 @@ die() { echo "[$(ts)] ERROR: $*" | tee -a "$LOG" >&2; exit 1; }
 for t in seqkit awk sed grep; do
   command -v "$t" >/dev/null 2>&1 || die "Missing: $t"
 done
+HAS_KMA=1;    command -v kma    >/dev/null 2>&1 || { log "[WARN] kma absent — skipping index"; HAS_KMA=0; }
 [[ "$MASK_LOW_COMPLEX" == "1" ]] && \
   command -v dustmasker >/dev/null 2>&1 || { log "[WARN] dustmasker not found — disabling masking"; MASK_LOW_COMPLEX=0; }
 [[ "$COMPRESS_FINAL" == "1" ]] && \
   { PZIP=$(command -v pigz 2>/dev/null || command -v gzip 2>/dev/null || die "pigz/gzip not found"); }
 
+# =============================================================================
 # ── Helper: count sequences ───────────────────────────────────────────────────
+# =============================================================================
 count_fa() {
   local f="$1"
   if [[ "$f" =~ \.gz$ ]]; then zgrep -c '^>' "$f" 2>/dev/null || echo 0
@@ -114,6 +121,7 @@ BASENAME=$(basename "${INPUT%.gz}")
 BASENAME="${BASENAME%.fasta}"
 BASENAME="${BASENAME%.fna}"
 FINAL="${OUTDIR}/${BASENAME}.ccmetagen.fasta"
+KMA_DB="${OUTDIR}/${BASENAME}_ccmetagen"
 [[ "$MASK_LOW_COMPLEX" == "1" ]] && FINAL="${OUTDIR}/${BASENAME}.ccmetagen.masked.fasta"
 [[ "$COMPRESS_FINAL"   == "1" ]] && FINAL="${FINAL}.gz"
 
@@ -128,6 +136,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# =============================================================================
 {
   echo "======================================================================"
   echo "clean_fasta.sh — MODULE 2"
@@ -145,7 +154,9 @@ trap cleanup EXIT
 n_INPUT=$(count_fa "$INPUT")
 log "Input sequences: ${n_INPUT}"
 
+# =============================================================================
 # ── STEP 1: Title filtering ───────────────────────────────────────────────────
+# =============================================================================
 log "Step 1/4: Title filtering"
 log "  Dropping: vector | synthetic construct | cloning | patent | metagenome"
 
@@ -170,14 +181,18 @@ cat_fa "$INPUT" \
 n_STEP1=$(count_fa "$STEP1")
 log "  After title filter: ${n_STEP1}"
 
+# =============================================================================
 # ── STEP 2: Length filter ─────────────────────────────────────────────────────
+# =============================================================================
 log "Step 2/4: Length filter (>= ${MIN_LEN} nt)"
 #[WARN] you may switch on flag -g/--remove-gaps to remove spaces
 seqkit seq -j "$THREADS" -m "$MIN_LEN" "$STEP1" > "$STEP2"
 n_STEP2=$(count_fa "$STEP2")
 log "  After length filter: ${n_STEP2}"
 
+# =============================================================================
 # ── STEP 3: Deduplicate ───────────────────────────────────────────────────────
+# =============================================================================
 log "Step 3/4: Identify identical sequences (seqkit rmdup -s -i)"
 # Run once
 seqkit rmdup -j "$THREADS" -s -i "$STEP2" \
@@ -203,7 +218,9 @@ else
 fi
 log "  Duplicate details: ${OUTDIR}/duplicates.txt"
 
+# =============================================================================
 # ── STEP 4: Low-complexity masking ───────────────────────────────────────────
+# =============================================================================
 if [[ "$MASK_LOW_COMPLEX" == "1" ]]; then
   log "Step 4/4: Low-complexity masking (dustmasker → hard-mask lowercase → N)"
   dustmasker -in "$STEP4_INPUT" -outfmt fasta \
@@ -218,6 +235,7 @@ if [[ "$MASK_LOW_COMPLEX" == "1" ]]; then
 else
   log "Step 4/4: Masking skipped (MASK_LOW_COMPLEX=0)"
   PRE_COMPRESS="$STEP4_INPUT"
+  n_STEP4=${n_STEP4_INPUT}
 fi
 
 # ── Compress and write final ──────────────────────────────────────────────────
@@ -232,6 +250,26 @@ fi
 n_final=${n_STEP4}
 sz_final=$(du -sh "$FINAL" | cut -f1)
 
+# =============================================================================
+# STEP 5 — KMA indexing
+# =============================================================================
+if [[ "$HAS_KMA" == "1" ]]; then
+  log "STEP 5: KMA indexing → $KMA_DB"
+  t0=$(date +%s)
+  kma index -i "$FINAL" -o "$KMA_DB" -verbose 2>&1 | tee -a "$LOG"
+  t1=$(date +%s)
+  log "  Index complete: $(( t1-t0 ))s"
+  ls -lh "${KMA_DB}".* | tee -a "$LOG"
+else
+  log "STEP 5: KMA not available — run manually:"
+  log ""
+  log "Next step — build KMA index:"
+  log "  kma index -i $FINAL -o $KMA_DB"
+  log ""
+  log "Done: $(ts)"
+fi
+# =============================================================================
+
 {
   echo "======================================================================"
   echo "clean_fasta.sh SUMMARY"
@@ -242,12 +280,8 @@ sz_final=$(du -sh "$FINAL" | cut -f1)
   echo "Duplicate sequences : ${n_duplicates}"
   echo "Final output        : $n_final sequences  ($sz_final)"
   echo "Output file         : $FINAL"
+  echo "KMA database prefix : $KMA_DB"
   echo "Finished            : $(ts)"
   echo "======================================================================"
 } | tee -a "$LOG"
 
-log ""
-log "Next step — build KMA index:"
-log "  kma index -i $FINAL -o <db_prefix>"
-log ""
-log "Done: $(ts)"

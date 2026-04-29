@@ -78,7 +78,7 @@ else
 fi
 [[ -z "$ARCHIVE" || ! -f "$ARCHIVE" ]] && \
   die "Cannot find bac120_marker_genes_${USE_REPS}_r*.tar.gz in $GTDB_DIR"
-log "Archive : $ARCHIVE ($(du -sh "$ARCHIVE" | cut -f1))"
+log "Archive	: $ARCHIVE ($(du -sh "$ARCHIVE" | cut -f1))"
 
 MARKER_INFO=$(ls  "${GTDB_DIR}"/bac120_msa_marker_info_r*.tsv 2>/dev/null | head -1 || true)
 TAX_FILE=$(   ls  "${GTDB_DIR}"/bac120_taxonomy_r*.tsv*       2>/dev/null | head -1 || true)
@@ -86,7 +86,7 @@ TAX_FILE=$(   ls  "${GTDB_DIR}"/bac120_taxonomy_r*.tsv*       2>/dev/null | head
 if [[ -f "$TAX_FILE" ]]; then
   [[ "$TAX_FILE" =~ \.gz$ ]] && zcat "$TAX_FILE" > "${OUTDIR}/taxonomy_map.tsv" \
                               || cp -f "$TAX_FILE"  "${OUTDIR}/taxonomy_map.tsv"
-  log "Taxonomy : $TAX_FILE ($(wc -l < "${OUTDIR}/taxonomy_map.tsv") genomes)"
+  log "Taxonomy	: $TAX_FILE ($(wc -l < "${OUTDIR}/taxonomy_map.tsv") genomes)"
 fi
 
 # =============================================================================
@@ -200,7 +200,7 @@ log "STEP 4: Marker × genome coverage report"
 COV="${OUTDIR}/marker_genome_coverage.tsv"
 echo -e "marker\tn_sequences\tgenome_accessions" > "$COV"
 grep '^>' "$CLEAN_FASTA" \
-  | awk -F'[~|]' '
+| awk -F'[~|]' '
 {
     # Remove leading ">" from genome ID
     genome = $1
@@ -218,7 +218,7 @@ grep '^>' "$CLEAN_FASTA" \
 }
 END {
     # Output: marker, count, genome list
-    for (m in count)
+    for (m in count) {
         printf "%s\t%d\t%s\n", m, count[m], genomes[m]
     }
 }
