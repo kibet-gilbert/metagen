@@ -88,39 +88,45 @@ process KMA_ALIGN {
     //           fragment output enabled for per-read abundance
     //           lower ID threshold captures reads from organisms divergent
     //           from the representative genome
+    //    -ID 80 \\
+    //    -coverage 80 \\
     def scg_flags = """\
         -1t1 \\
         -mem_mode \\
         -and \\
         -apm f \\
         -ef \\
-        -ID 80 \\
-        -coverage 80 \\
+        -ID ${params.kma_identity ?: 80} \\
+        -coverage ${params.kma_coverage ?: 80} \\
         -t ${task.cpus}"""
 
     // ccmetagen mode: standard KMA settings for CCMetagen pipeline
     //                 -sam disabled (too large for metagenomics)
     //                 -ef enables fragment output for abundance
+    //    -ID 50 \\
+    //    -coverage 50 \\
     def ccmetagen_flags = """\
         -1t1 \\
         -mem_mode \\
         -and \\
         -apm f \\
         -ef \\
-        -ID 50 \\
-        -coverage 50 \\
+        -ID ${params.kma_identity ?: 50} \\
+        -coverage ${params.kma_coverage ?: 50} \\
         -t ${task.cpus}"""
 
     // resfinder mode: strict identity matching ARG pipeline settings
     //                 matches existing ResFinder/CARD-RGI workflow
+    //    -ID 90 \\
+    //    -coverage 90 \\
     def resfinder_flags = """\
         -1t1 \\
         -mem_mode \\
         -and \\
         -apm f \\
         -ef \\
-        -ID 90 \\
-        -coverage 90 \\
+        -ID ${params.kma_identity ?: 90} \\
+        -coverage ${params.kma_coverage ?: 90} \\
         -t ${task.cpus}"""
 
     def mode_flags = (mode == 'ccmetagen') ? ccmetagen_flags :
