@@ -29,7 +29,7 @@ trap 'on_error $LINENO' ERR
 
 # ── User settings ─────────────────────────────────────────────────────────────
 workdir="${1:-refseq}"
-threeds="${2:-20}"
+threeds="${2:-18}"
 want_rep="${3:-0}"
 KEEP_INTERMEDIATES="${KEEP_INTERMEDIATES:-0}"
 SKIP_MERGE="${SKIP_MERGE:-0}"

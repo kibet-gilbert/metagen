@@ -1,0 +1,2 @@
+// main.nf placeholder
+workflow {}

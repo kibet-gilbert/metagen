@@ -1,0 +1,5 @@
+sample,fastq_1,fastq_2,kraken_output,kraken_report,county,site,year_week
+SPL0200,/var/scratch/gkibet/results/run01/qc/SPL0200_R1.fastq.gz,/var/scratch/gkibet/results/run01/qc/SPL0200_R2.fastq.gz,/var/scratch/gkibet/results/run01/kraken2/SPL0200.kraken2.output,/var/scratch/gkibet/results/run01/kraken2/SPL0200.kraken2.report,Mombasa,Migadini_AIC,23_42
+SPL0201,/var/scratch/gkibet/results/run01/qc/SPL0201_R1.fastq.gz,/var/scratch/gkibet/results/run01/qc/SPL0201_R2.fastq.gz,/var/scratch/gkibet/results/run01/kraken2/SPL0201.kraken2.output,/var/scratch/gkibet/results/run01/kraken2/SPL0201.kraken2.report,Mombasa,Migadini_AIC,23_42
+SPL0390,/var/scratch/gkibet/results/run02/qc/SPL0390_R1.fastq.gz,/var/scratch/gkibet/results/run02/qc/SPL0390_R2.fastq.gz,/var/scratch/gkibet/results/run02/kraken2/SPL0390.kraken2.output,/var/scratch/gkibet/results/run02/kraken2/SPL0390.kraken2.report,Kisumu,Obunga,24_01
+SPL1288,/var/scratch/gkibet/results/run33/qc/SPL1288_R1.fastq.gz,/var/scratch/gkibet/results/run33/qc/SPL1288_R2.fastq.gz,/var/scratch/gkibet/results/run33/kraken2/SPL1288.kraken2.output,/var/scratch/gkibet/results/run33/kraken2/SPL1288.kraken2.report,Mombasa,Mikindani,25_44
