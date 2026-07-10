@@ -1,2 +1,9 @@
+# Temporary files
+*.swp
+
+# containers
 *.sif
 *.img
+
+# Extra/TMP directories
+files/

@@ -7,9 +7,22 @@
 #
 #   Step 1 — Title filtering  (drop PREDICTED, vectors, synthetic, uncultured...)
 #   Step 2 — Length filter    (keep sequences >= MIN_LEN)
-#   Step 3 — Deduplication    (seqkit rmdup by sequence)
+#   Step 3 — Taxid-scoped dereplication  (exact + containment, per taxid)
 #   Step 4 — Low-complexity masking (dustmasker → hard-mask to N)  [optional]
-#   Step 5 — Compress         (pigz/gzip)                          [optional]
+#   Step 5 — Compress + KMA index                                 [optional]
+#
+# STEP 3 (NEW) — taxid-scoped exact + containment dereplication
+# -------------------------------------------------------------
+# Sequence headers MUST begin with the numeric NCBI taxid as the first
+# field, separated by HDR_DELIM (default '|'):   >taxID|description...
+# Dereplication is performed INDEPENDENTLY within each taxid, so:
+#   * identical sequences from DIFFERENT taxa are always retained;
+#   * within a taxid, exact duplicates AND shorter sequences fully
+#     contained (100% identity over 100% of their length) in a longer
+#     one are collapsed, keeping the LONGEST as representative.
+# This is done with mmseqs2 easy-linclust (run via a Singularity image),
+# after partitioning the input by taxid. Singletons and any record whose
+# header lacks a numeric taxid are passed through unchanged.
 #
 # The script accepts plain or gzip-compressed input.
 # Intermediate files are removed unless KEEP_INTERMEDIATE=1.
@@ -27,10 +40,17 @@
 # Environment overrides:
 #   MIN_LEN=300              minimum sequence length (default: 300)
 #   MASK_LOW_COMPLEX=1       1=run dustmasker (default); 0=skip
-#   DEDUP_SEQUENCES=0        1=Filter Duplicate Sequences (default); 0=skip
+#   DEDUP_SEQUENCES=0        1=collapse dups/contained seqs; 0=report only (default)
 #   COMPRESS_FINAL=1         1=gzip output (default); 0=plain
 #   KEEP_INTERMEDIATE=0      1=keep tmp files; 0=delete (default)
-#   THREADS=4                threads for seqkit / pigz
+#   THREADS=4                threads for seqkit / pigz / mmseqs
+#
+#   --- Step 3 (taxid-scoped dereplication) ---
+#   HDR_DELIM='|'            header field separator; taxid is field 1
+#   MMSEQS_SIF=<path.sif>    Singularity image providing `mmseqs` (REQUIRED
+#                            when DEDUP_SEQUENCES=1)
+#   SORT_MEM=8G              memory budget for the external sort (partitioning)
+#   SORT_TMP=$OUTDIR/.sorttmp scratch dir for the external sort
 # =============================================================================
 set -Eeuo pipefail
 
@@ -52,6 +72,11 @@ COMPRESS_FINAL="${COMPRESS_FINAL:-1}"
 KEEP_INTERMEDIATE="${KEEP_INTERMEDIATE:-0}"
 THREADS="${THREADS:-4}"
 
+# Step 3 (taxid-scoped dereplication) settings
+HDR_DELIM="${HDR_DELIM:-|}"
+MMSEQS_SIF="${MMSEQS_SIF:-}"
+SORT_MEM="${SORT_MEM:-8G}"
+
 usage() {
   cat <<EOF
 Usage: $0 <input.fasta[.gz]> [outdir]
@@ -62,10 +87,12 @@ Usage: $0 <input.fasta[.gz]> [outdir]
 Environment:
   MIN_LEN=${MIN_LEN}
   MASK_LOW_COMPLEX=${MASK_LOW_COMPLEX}   (1=dustmasker, 0=skip)
-  DEDUP_SEQUENCES=${DEDUP_SEQUENCES}     (1=sedkit rmdup, 0=skip)
+  DEDUP_SEQUENCES=${DEDUP_SEQUENCES}     (1=collapse dups+contained, 0=report only)
   COMPRESS_FINAL=${COMPRESS_FINAL}       (1=gzip, 0=plain)
   KEEP_INTERMEDIATE=${KEEP_INTERMEDIATE} (1=keep tmp, 0=delete)
   THREADS=${THREADS}
+  HDR_DELIM=${HDR_DELIM}                 (taxid is header field 1)
+  MMSEQS_SIF=${MMSEQS_SIF:-<unset>}      (required when DEDUP_SEQUENCES=1)
 EOF
 }
 
@@ -74,6 +101,7 @@ OUTDIR="${2:-fasta_clean}"
 [[ -z "$INPUT" ]] && { usage; exit 1; }
 [[ ! -f "$INPUT" ]] && { echo "ERROR: Input not found: $INPUT"; exit 1; }
 mkdir -p "$OUTDIR"
+SORT_TMP="${SORT_TMP:-${OUTDIR}/.sorttmp}"
 
 # =============================================================================
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -95,6 +123,14 @@ HAS_KMA=1;    command -v kma    >/dev/null 2>&1 || { log "[WARN] kma absent — 
   command -v dustmasker >/dev/null 2>&1 || { log "[WARN] dustmasker not found — disabling masking"; MASK_LOW_COMPLEX=0; }
 [[ "$COMPRESS_FINAL" == "1" ]] && \
   { PZIP=$(command -v pigz 2>/dev/null || command -v gzip 2>/dev/null || die "pigz/gzip not found"); }
+
+# Step 3 needs a container runtime + an mmseqs image when actually collapsing.
+SING=""
+if [[ "$DEDUP_SEQUENCES" == "1" ]]; then
+  SING=$(command -v singularity 2>/dev/null || command -v apptainer 2>/dev/null || true)
+  [[ -n "$SING" ]] || die "DEDUP_SEQUENCES=1 but neither singularity nor apptainer found"
+  [[ -n "$MMSEQS_SIF" && -f "$MMSEQS_SIF" ]] || die "DEDUP_SEQUENCES=1 requires MMSEQS_SIF=<path to mmseqs .sif>"
+fi
 
 # =============================================================================
 # ── Helper: count sequences ───────────────────────────────────────────────────
@@ -129,7 +165,7 @@ KMA_DB="${OUTDIR}/${BASENAME}_ccmetagen"
 cleanup() {
   if [[ "$KEEP_INTERMEDIATE" != "1" ]]; then
     log "Cleaning intermediates in $TMP/"
-    rm -rf "$TMP" || true
+    rm -rf "$TMP" "$SORT_TMP" || true
   else
     log "KEEP_INTERMEDIATE=1 — leaving $TMP/ intact"
   fi
@@ -174,7 +210,7 @@ cat_fa "$INPUT" \
 # Simpler streaming approach that handles multi-line FASTA:
 cat_fa "$INPUT" \
   | awk 'BEGIN{RS=">"; ORS=""} NR>1 {print ">"$0}' \
-  | grep -Eiv 'vector|synthetic construct|cloning|patent|metagenome' \
+  | grep -Eiv 'PREDICTED|vector|synthetic construct|cloning|patent|metagenome' \
   | awk 'BEGIN{RS=">"; ORS=""} NR>1 {print ">"$0}' \
   > "$STEP1"
 
@@ -193,30 +229,119 @@ log "  After length filter: ${n_STEP2}"
 # =============================================================================
 # ── STEP 3: Deduplicate ───────────────────────────────────────────────────────
 # =============================================================================
-log "Step 3/4: Identify identical sequences (seqkit rmdup -s -i)"
-# Run once
-seqkit rmdup -j "$THREADS" -s -i "$STEP2" \
-  --id-regexp '^([^|]+\|[A-Za-z.]+(?:\s+[A-Za-z]+)?)' \
-  -d "${OUTDIR}/duplicates.txt" \
-  -D "${OUTDIR}/duplicate_seqids.txt" \
-  > "$STEP3"
+# =============================================================================
+# ── STEP 3: Taxid-scoped dereplication (exact + containment) ──────────────────
+# =============================================================================
+# Dereplicate WITHIN each taxid only. Headers must be >taxID<HDR_DELIM>...
+# Approach:
+#   3a. Partition: external-sort records by taxid, write one file per taxid.
+#   3b. Per-taxid mmseqs easy-linclust (--min-seq-id 1.0 -c 1.0 --cov-mode 1):
+#       collapses exact dups AND shorter contained seqs, keeping the longest.
+#       Singletons / non-numeric-taxid records are passed through unchanged.
+#   3c. Reassemble representatives + passthrough into STEP3.
+# When DEDUP_SEQUENCES=0 we still PARTITION+REPORT how many would be removed,
+# but pass STEP2 through unchanged (report-only, matching prior behaviour).
+log "Step 3/4: Taxid-scoped dereplication (exact + containment, delim='${HDR_DELIM}')"
 
-# Precompute counts (avoid repeated expensive calls)
+PARTS="${TMP}/parts"
+REPS="${TMP}/reps"
+mkdir -p "$PARTS" "$REPS" "$SORT_TMP"
+
+# ---- 3a. Partition by taxid (bounded RAM via external sort) ------------------
+# Linearise each record onto one line (newlines -> \x01), sort by taxid,
+# then emit per-taxid files opening exactly one handle at a time.
+COUNTS="${TMP}/taxid_counts.tsv"
+: > "$COUNTS"
+log "  3a. Partitioning by taxid (SORT_MEM=${SORT_MEM})"
+awk -v delim="$HDR_DELIM" '
+      BEGIN { RS=">"; ORS="" }
+      NR==1 { next }
+      {
+        rec=$0; header=rec; sub(/\n.*/,"",header)
+        split(header,a,delim); tax=a[1]
+        if (tax !~ /^[0-9]+$/) tax="_NOTAX"
+        enc=">" rec; gsub(/\n/,"\001",enc)
+        print tax "\t" enc "\n"
+      }
+    ' "$STEP2" \
+  | sort -t$'\t' -k1,1 -S "$SORT_MEM" -T "$SORT_TMP" --parallel="$THREADS" \
+  | awk -v parts="$PARTS" -v countf="$COUNTS" '
+      BEGIN { FS="\t"; cur=""; n=0 }
+      {
+        tax=$1; enc=$2
+        if (tax!=cur) {
+          if (cur!="") { print cur "\t" n >> countf; close(out) }
+          cur=tax; n=0; out=parts "/" tax ".fasta"; printf "" > out
+        }
+        gsub(/\001/,"\n",enc); printf "%s", enc >> out; n++
+      }
+      END { if (cur!="") { print cur "\t" n >> countf; close(out) } }
+    '
+n_taxids=$(wc -l < "$COUNTS")
+log "  3a. Partitioned into ${n_taxids} taxid groups"
+
+# ---- 3b. Per-taxid dereplication --------------------------------------------
+: > "$STEP3"
+mm() { "$SING" exec --bind "$OUTDIR" "$MMSEQS_SIF" mmseqs "$@"; }
+
+n_in_multi=0      # sequences entering multi-seq taxid dedup
+n_rep_multi=0     # representatives kept from those
+while IFS=$'\t' read -r tax cnt; do
+  [[ -z "$tax" ]] && continue
+  in="${PARTS}/${tax}.fasta"
+  [[ -s "$in" ]] || continue
+
+  # Passthrough: singletons and the non-numeric-taxid bucket are never collapsed
+  if [[ "$tax" == "_NOTAX" || "$cnt" -le 1 ]]; then
+    cat "$in" >> "$STEP3"
+    continue
+  fi
+
+  if [[ "$DEDUP_SEQUENCES" == "1" ]]; then
+    wt="${TMP}/mm_${tax}"; rm -rf "$wt"; mkdir -p "$wt"
+    if mm easy-linclust "$in" "${wt}/clu" "${wt}/tmp" \
+          --min-seq-id 1.0 -c 1.0 --cov-mode 1 \
+          --threads "$THREADS" -v 1 >>"$LOG" 2>&1; then
+      r=$(grep -c '^>' "${wt}/clu_rep_seq.fasta" 2>/dev/null || echo 0)
+      cat "${wt}/clu_rep_seq.fasta" >> "$STEP3"
+      n_in_multi=$(( n_in_multi + cnt ))
+      n_rep_multi=$(( n_rep_multi + r ))
+    else
+      log "  [WARN] linclust failed for taxid ${tax} — passing through unchanged"
+      cat "$in" >> "$STEP3"
+      n_in_multi=$(( n_in_multi + cnt ))
+      n_rep_multi=$(( n_rep_multi + cnt ))
+    fi
+    rm -rf "$wt"
+  else
+    # report-only: still measure collapse, but keep all sequences
+    wt="${TMP}/mm_${tax}"; rm -rf "$wt"; mkdir -p "$wt"
+    if mm easy-linclust "$in" "${wt}/clu" "${wt}/tmp" \
+          --min-seq-id 1.0 -c 1.0 --cov-mode 1 \
+          --threads "$THREADS" -v 1 >>"$LOG" 2>&1; then
+      r=$(grep -c '^>' "${wt}/clu_rep_seq.fasta" 2>/dev/null || echo 0)
+      n_in_multi=$(( n_in_multi + cnt ))
+      n_rep_multi=$(( n_rep_multi + r ))
+    fi
+    rm -rf "$wt"
+  fi
+done < "$COUNTS"
+
 n_STEP3=$(count_fa "$STEP3")
-n_duplicates=$(( n_STEP2 - n_STEP3 ))
+# Removable = (multi-seq inputs) - (representatives kept)
+n_duplicates=$(( n_in_multi - n_rep_multi ))
 
 if [[ "$DEDUP_SEQUENCES" == "1" ]]; then
-  log "  Deduplicated identical sequences"
-  log "  After dedup: ${n_STEP3} (removed ${n_duplicates} duplicates)"
+  log "  Dereplicated within taxid (exact + containment)"
+  log "  After dedup: ${n_STEP3} (removed ${n_duplicates} redundant sequences)"
   STEP4_INPUT=$STEP3
   n_STEP4_INPUT=${n_STEP3}
 else
-  log "  Deduplication skipped (reporting only)"
-  log "  Found ${n_duplicates} duplicates)"
+  log "  Dereplication skipped (reporting only)"
+  log "  Would remove ${n_duplicates} redundant sequences across multi-seq taxids"
   STEP4_INPUT=$STEP2
   n_STEP4_INPUT=${n_STEP2}
 fi
-log "  Duplicate details: ${OUTDIR}/duplicates.txt"
 
 # =============================================================================
 # ── STEP 4: Low-complexity masking ───────────────────────────────────────────
@@ -277,11 +402,10 @@ fi
   echo "After title filter  : ${n_STEP1}"
   echo "After length (${MIN_LEN}): ${n_STEP2}"
   echo "After dedup         : ${n_STEP4_INPUT}"
-  echo "Duplicate sequences : ${n_duplicates}"
+  echo "Redundant seqs      : ${n_duplicates}  (exact + contained, within-taxid)"
   echo "Final output        : $n_final sequences  ($sz_final)"
   echo "Output file         : $FINAL"
   echo "KMA database prefix : $KMA_DB"
   echo "Finished            : $(ts)"
   echo "======================================================================"
 } | tee -a "$LOG"
-

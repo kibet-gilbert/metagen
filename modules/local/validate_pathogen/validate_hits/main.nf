@@ -5,10 +5,10 @@ process VALIDATE_HITS {
     tag "${meta.id}"
     label 'process_low'
 
-    conda     "conda-forge::python=3.10 conda-forge::pandas=2.0"
+    conda     "conda-forge::python=3.14 conda-forge::pandas=2.2.1"
     container "${ workflow.containerEngine == 'singularity' ?
-        'https://depot.galaxyproject.org/singularity/pandas:2.0.3' :
-        'quay.io/biocontainers/pandas:2.0.3' }"
+        'https://depot.galaxyproject.org/singularity/pandas:2.2.1' :
+        'quay.io/biocontainers/pandas:2.2.1' }"
 
     publishDir(
         path:    "${params.outdir}/validation",
@@ -31,7 +31,7 @@ process VALIDATE_HITS {
     def min_pident   = task.ext.min_pident     ?: params.min_pident     ?: 95.0
     def min_qcovs    = task.ext.min_qcovs      ?: params.min_qcovs      ?: 80.0
     def min_bitscore = task.ext.min_bitscore   ?: params.min_bitscore   ?: 100.0
-    def has_blast    = blast_summary instanceof List ? 'false' : 'true'
+    def has_blast    = blast_summary instanceof List ? 'False' : 'True'
     """
     #!/usr/bin/env python3
     import pandas as pd, json, sys, os
@@ -47,7 +47,7 @@ process VALIDATE_HITS {
     targets = [t.strip() for t in TARGET_STR.split(',') if t.strip()]
 
     blast_path = "${blast_summary}"
-    if HAS_BLAST == 'true' and os.path.isfile(blast_path) and os.path.getsize(blast_path) > 0:
+    if HAS_BLAST and os.path.isfile(blast_path) and os.path.getsize(blast_path) > 0:
         try:
             blast_df = pd.read_csv(blast_path, sep='\\t', dtype={'taxid': str})
         except Exception:

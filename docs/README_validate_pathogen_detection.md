@@ -36,53 +36,53 @@ For pathogen surveillance — where false positives can trigger costly public he
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  INPUT                                                                │
-│  - Paired-end FASTQ (clean, host-decontaminated)                      │
-│  - Kraken2 classification output (per-read assignments)               │
-│  - Kraken2 report file                                                │
-│  - List of target pathogen taxids                                     │
-│  - Reference BLAST database (local or remote)                         │
+│  INPUT                                                               │
+│  - Paired-end FASTQ (clean, host-decontaminated)                     │
+│  - Kraken2 classification output (per-read assignments)              │
+│  - Kraken2 report file                                               │
+│  - List of target pathogen taxids                                    │
+│  - Reference BLAST database (local or remote)                        │
 └──────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  STEP 1: KRAKENTOOLS_EXTRACTKRAKENREADS                               │
-│   Tool: KrakenTools/extract_kraken_reads.py (Lu et al. 2017)          │
-│   Action: Pulls reads classified to target taxids + descendants       │
-│   Output: FASTA (or FASTQ) of extracted reads, one file per sample    │
+│  STEP 1: KRAKENTOOLS_EXTRACTKRAKENREADS                              │
+│   Tool: KrakenTools/extract_kraken_reads.py (Lu et al. 2017)         │
+│   Action: Pulls reads classified to target taxids + descendants      │
+│   Output: FASTA (or FASTQ) of extracted reads, one file per sample   │
 └──────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  STEP 2: CONCAT_EXTRACTED_READS                                       │
-│   Action: Combines R1 + R2 FASTA into a single query file             │
-│           with /1 /2 suffix on read IDs                               │
+│  STEP 2: CONCAT_EXTRACTED_READS                                      │
+│   Action: Combines R1 + R2 FASTA into a single query file            │
+│           with /1 /2 suffix on read IDs                              │
 └──────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  STEP 3: BLAST_BLASTN                                                 │
-│   Tool: NCBI BLAST+ blastn                                            │
-│   Modes: 'local' | 'custom' | 'remote'                                │
-│   Output: Tabular hits (outfmt 6) with taxonomy fields                │
-│           Per-taxon summary (hits, mean identity, coverage, bitscore) │
+│  STEP 3: BLAST_BLASTN                                                │
+│   Tool: NCBI BLAST+ blastn                                           │
+│   Modes: 'local' | 'custom' | 'remote'                               │
+│   Output: Tabular hits (outfmt 6) with taxonomy fields               │
+│           Per-taxon summary (hits, mean identity, coverage, bitscore)│
 └──────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  STEP 4: VALIDATE_HITS                                                │
-│   Action: Cross-references Kraken2 claim vs BLAST evidence            │
-│           Applies thresholds (n_hits, %identity, qcov, bitscore)      │
-│   Output: Per-pathogen validation status (CONFIRMED|WEAK|FAILED)      │
+│  STEP 4: VALIDATE_HITS                                               │
+│   Action: Cross-references Kraken2 claim vs BLAST evidence           │
+│           Applies thresholds (n_hits, %identity, qcov, bitscore)     │
+│   Output: Per-pathogen validation status (CONFIRMED|WEAK|FAILED)     │
 └──────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  OUTPUTS                                                              │
-│  - validation.tsv  : per-sample × per-taxid status table              │
-│  - validation.json : same as TSV in machine-readable form             │
-│  - blast.tsv       : raw BLAST hits for downstream inspection         │
-│  - blast.summary   : aggregated per-taxon BLAST stats                 │
+│  OUTPUTS                                                             │
+│  - validation.tsv  : per-sample × per-taxid status table             │
+│  - validation.json : same as TSV in machine-readable form            │
+│  - blast.tsv       : raw BLAST hits for downstream inspection        │
+│  - blast.summary   : aggregated per-taxon BLAST stats                │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -108,7 +108,7 @@ your_pipeline/
 │               └── meta.yml
 └── subworkflows/
     └── local/
-        └── validate_pathogen_detection.nf
+        └── validate_pathogen_detection/main.nf
 ```
 
 ---
@@ -242,7 +242,7 @@ process {
 
 | Mode | Database location | Speed | Use case |
 |------|------------------|-------|----------|
-| `local` | On HPC filesystem (e.g. `/export/data/ncbi/nt`) | Fast | Production surveillance with downloaded DB |
+| `local` | On HPC filesystem (e.g. `/export/data/bio/ncbi/blast/db/v5/nr`) | Fast | Production surveillance with downloaded DB |
 | `custom` | Custom curated FASTA indexed with `makeblastdb` | Fast | Pathogen-focused database (smaller, faster) |
 | `remote` | NCBI remote BLAST API | Very slow | One-off lookups, no local DB available |
 

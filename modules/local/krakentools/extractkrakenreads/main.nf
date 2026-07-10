@@ -1,43 +1,31 @@
 // =============================================================================
 // modules/local/krakentools/extractkrakenreads/main.nf
 //
-// Extracts reads from FASTQ files based on Kraken2/Bracken classification
-// using KrakenTools' extract_kraken_reads.py.
+// Extract and subsample reads by taxid from Kraken2 results.
+// Python logic lives in bin/extract_reads_by_taxid.py (auto-added to PATH).
 //
-// Use case in pathogen validation workflow:
-//   Given Kraken2 classifications, pull out the reads assigned to a list of
-//   target pathogen taxIDs (and optionally their taxonomic children), then
-//   pass those reads to BLAST/MAG assembly for orthogonal confirmation.
-//
-// Inputs:
-//   tuple val(meta), path(reads), path(kraken_output), path(kraken_report)
-//     meta            : [id: <sample_id>, ...] standard nf-core meta map
-//     reads           : [R1.fastq.gz, R2.fastq.gz] OR [R1.fastq.gz] for SE
-//     kraken_output   : raw per-read kraken2 output file (NOT the report)
-//     kraken_report   : kraken2 .report file (required for --include-children)
-//   val(taxids)       : list of taxIDs (integers or strings) to extract
-//
-// Outputs:
-//   tuple val(meta), path("*.extracted_{1,2}.fasta.gz") : extracted reads
-//   tuple val(meta), path("*.summary.txt")              : extraction summary
-//   path "versions.yml"
+// Sub-steps:
+//   1a. parse-report    -> taxonomy tree, abundance table, taxid groups
+//   1b. extract-readids -> read_id/taxid pairs from kraken2 output
+//   1c. subsample       -> per-group random subsampling without replacement
+//   1d. seqtk subseq   -> physical read extraction from R1 / R2 FASTQ
 // =============================================================================
 
 process KRAKENTOOLS_EXTRACTKRAKENREADS {
     tag "${meta.id}"
     label 'process_medium'
 
-    conda     "bioconda::krakentools=1.2 conda-forge::pigz=2.8"
-    container "${ (workflow.containerEngine == 'singularity' || workflow.containerEngine == 'apptainer')?
-        'https://depot.galaxyproject.org/singularity/krakentools:1.2--pyh5e36f6f_0' :
-        'quay.io/biocontainers/krakentools:1.2--pyh5e36f6f_0' }"
-        // 'https://depot.galaxyproject.org/singularity/mulled-v2-ef891e9b0617d884630ceb63401a526b6008baec:5f7c6be2f66db88a16bfdb900e71a9800ddbcb04' :
-        // 'quay.io/biocontainers/mulled-v2-ef891e9b0617d884630ceb63401a526b6008baec:5f7c6be2f66db88a16bfdb900e71a9800ddbcb04' }"
+    conda "bioconda::seqtk=1.4 conda-forge::python=3.10 conda-forge::pigz"
+
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'docker://docker.io/kibetgilbert/krakentools:1.2.1' :
+        'docker.io/kibetgilbert/krakentools:1.2.1' }"
 
     publishDir(
-        path:  { "${params.outdir}/krakentools/extract_reads/${meta.id}" },
-        mode:  params.publish_dir_mode ?: 'copy',
-        pattern: "*.{fasta.gz,fastq.gz,summary.txt}"
+        path:    { "${params.outdir}/extracted_reads/${meta.id}" },
+        mode:    params.publish_dir_mode ?: 'copy',
+        pattern: "*.{fasta.gz,fastq.gz,txt,tsv,json}",
+        enabled: params.save_extracted_reads ?: true
     )
 
     input:
@@ -45,141 +33,187 @@ process KRAKENTOOLS_EXTRACTKRAKENREADS {
     val   taxids
 
     output:
-    tuple val(meta), path("${prefix}.extracted_1.${suffix}.gz"),                    emit: extracted_r1
-    tuple val(meta), path("${prefix}.extracted_2.${suffix}.gz"),  optional: true,  emit: extracted_r2
-    tuple val(meta), path("${prefix}.summary.txt"),                                 emit: summary
-    path  "versions.yml",                                                           emit: versions
+    tuple val(meta), path("${prefix}.extracted_R1.fasta.gz"),   emit: extracted_r1
+    tuple val(meta), path("${prefix}.extracted_R2.fasta.gz"),   emit: extracted_r2,          optional: true
+    tuple val(meta), path("${prefix}.taxid_abundance.tsv"),     emit: taxid_abundance
+    tuple val(meta), path("${prefix}.subsampling_summary.tsv"), emit: subsampling_summary
+    tuple val(meta), path("${prefix}.readid_taxid.tsv"),        emit: readid_taxid
+    tuple val(meta), path("${prefix}.taxid_groups.json"),       emit: taxid_groups
+    tuple val(meta), path("${prefix}.summary.txt"),             emit: summary
+    path  "versions.yml",                                        emit: versions
 
     when:
     task.ext.when == null || task.ext.when
 
     script:
-    // ── Resolve parameters ────────────────────────────────────────────────
-    prefix         = task.ext.prefix ?: "${meta.id}"
-    def args       = task.ext.args   ?: ''
-    def fastq_out  = task.ext.fastq_output != null ? task.ext.fastq_output : false
-    suffix         = fastq_out ? 'fastq' : 'fasta'
-    def fastq_flag = fastq_out ? '--fastq-output' : ''
-    def include_children = task.ext.include_children != null ? task.ext.include_children : true
-    def include_parents  = task.ext.include_parents  != null ? task.ext.include_parents  : false
-    def children_flag = include_children ? '--include-children' : ''
-    def parents_flag  = include_parents  ? '--include-parents'  : ''
-    def max_reads     = task.ext.max_reads ? "--max ${task.ext.max_reads}" : ''
-
-    // ── Validate inputs ───────────────────────────────────────────────────
-    if (!taxids || (taxids instanceof List && taxids.isEmpty())) {
-        error("KRAKENTOOLS_EXTRACTKRAKENREADS: 'taxids' input is empty for sample '${meta.id}'")
-    }
-    def taxid_list = (taxids instanceof List) ? taxids.join(' ') : taxids.toString()
-
-    // ── Resolve paired vs single end ──────────────────────────────────────
+    prefix        = task.ext.prefix              ?: "${meta.id}"
+    def max_reads = task.ext.max_reads_per_taxid ?: params.max_reads_per_taxid ?: 50000
+    def seed      = task.ext.subsample_seed      ?: 42
     def is_paired = reads instanceof List && reads.size() == 2
-    def r1 = is_paired ? reads[0] : (reads instanceof List ? reads[0] : reads)
-    def r2 = is_paired ? reads[1] : ''
-    def s2_arg = is_paired ? "-s2 ${r2}" : ''
-    def o2_arg = is_paired ? "-o2 ${prefix}.extracted_2.${suffix}" : ''
-
+    def r1        = is_paired ? reads[0] : reads
+    def r2        = is_paired ? reads[1] : 'NO_R2'
+    def taxid_csv = (taxids instanceof List)
+                    ? taxids.collect { it.toString().trim() }.join(',')
+                    : taxids.toString().trim()
     """
     set -euo pipefail
 
-    echo "[INFO] Sample          : ${meta.id}"
-    echo "[INFO] Paired-end      : ${is_paired}"
-    echo "[INFO] TaxIDs requested: ${taxid_list}"
-    echo "[INFO] Include children: ${include_children}"
-    echo "[INFO] Include parents : ${include_parents}"
-    echo "[INFO] Output format   : ${suffix}"
+    # Resolve Groovy values into named bash variables ONCE.
+    # Everything below uses \${BASH_VAR} (escaped dollar, evaluated at runtime).
+    IS_PAIRED="${is_paired}"
+    R1="${r1}"
+    R2="${r2}"
+    PREFIX="${prefix}"
+    MAX_READS="${max_reads}"
+    SEED="${seed}"
+    TAXID_CSV="${taxid_csv}"
+    CPUS="${task.cpus}"
 
-    # ── Run extraction ───────────────────────────────────────────────────
-    extract_kraken_reads.py \\
-        -k ${kraken_output} \\
-        -r ${kraken_report} \\
-        -s ${r1} \\
-        ${s2_arg} \\
-        -o ${prefix}.extracted_1.${suffix} \\
-        ${o2_arg} \\
-        -t ${taxid_list} \\
-        ${children_flag} \\
-        ${parents_flag} \\
-        ${fastq_flag} \\
-        ${max_reads} \\
-        ${args}
+    echo "========================================================"
+    echo "[INFO] Sample       : ${meta.id}"
+    echo "[INFO] Taxids       : \${TAXID_CSV}"
+    echo "[INFO] Max reads    : \${MAX_READS} per taxid group"
+    echo "[INFO] Seed         : \${SEED}"
+    echo "[INFO] Paired       : \${IS_PAIRED}"
+    echo "========================================================"
 
-    # ── Sanity check: did we get any reads? ──────────────────────────────
-    if [[ ! -s "${prefix}.extracted_1.${suffix}" ]]; then
-        echo "[WARN] No reads extracted for taxids: ${taxid_list}" >&2
-        # Create empty file with header so downstream doesn't crash
-        touch "${prefix}.extracted_1.${suffix}"
+    mkdir -p per_taxid
+
+    # ── STEP 1a: Parse kraken2 report ──────────────────────────────────────
+    echo "[STEP 1a] Parsing kraken2 report..."
+    extract_reads_by_taxid.py parse-report \\
+        --report  ${kraken_report} \\
+        --taxids  "\${TAXID_CSV}" \\
+        --prefix  "\${PREFIX}"
+
+    echo "[STEP 1a] Done. Taxids found: \$(wc -l < \${PREFIX}.all_taxids.txt)"
+
+    # ── STEP 1b: Extract read_id/taxid pairs ───────────────────────────────
+    echo "[STEP 1b] Extracting read IDs from kraken2 output..."
+    extract_reads_by_taxid.py extract-readids \\
+        --output  ${kraken_output} \\
+        --taxids  "\${PREFIX}.all_taxids.txt" \\
+        --prefix  "\${PREFIX}"
+
+    n_readids=\$(( \$(wc -l < \${PREFIX}.readid_taxid.tsv) - 1 ))
+    echo "[STEP 1b] Done. Read IDs extracted: \${n_readids}"
+
+    # ── STEP 1c: Subsample per taxid group ─────────────────────────────────
+    echo "[STEP 1c] Subsampling read IDs per taxid group..."
+    extract_reads_by_taxid.py subsample \\
+        --readids   "\${PREFIX}.readid_taxid.tsv" \\
+        --groups    "\${PREFIX}.taxid_groups.json" \\
+        --max-reads "\${MAX_READS}" \\
+        --seed      "\${SEED}" \\
+        --prefix    "\${PREFIX}"
+
+    echo "[STEP 1c] Done."
+    cat \${PREFIX}.subsampling_summary.tsv
+
+    # ── STEP 1d: Extract reads from FASTQ by read ID list ──────────────────
+    echo "[STEP 1d] Extracting reads with seqtk subseq..."
+
+    : > \${PREFIX}.extracted_R1.fasta
+    if [[ "\${IS_PAIRED}" == "true" ]]; then
+        : > \${PREFIX}.extracted_R2.fasta
     fi
 
-    # ── Count extracted reads ────────────────────────────────────────────
-    if [[ "${suffix}" == "fasta" ]]; then
-        n_r1=\$(grep -c '^>' ${prefix}.extracted_1.${suffix} || echo 0)
-    else
-        n_r1=\$(( \$(wc -l < ${prefix}.extracted_1.${suffix}) / 4 ))
+    # Auto-detect mate suffix style from the actual FASTQ headers.
+    # Handles /1 /2, .1 .2, or no suffix at all — avoids hardcoding.
+    R1_HEADER=\$(gzip -cd "\${R1}" | sed -n '1p')
+    R1_SUFFIX=""
+    if   [[ "\${R1_HEADER}" == *"/1" ]]; then R1_SUFFIX="/1"
+    elif [[ "\${R1_HEADER}" == *".1" ]]; then R1_SUFFIX=".1"
     fi
+    echo "[INFO] Detected R1 suffix: '\${R1_SUFFIX}'"
 
-    n_r2=0
-    if [[ "${is_paired}" == "true" && -s "${prefix}.extracted_2.${suffix}" ]]; then
-        if [[ "${suffix}" == "fasta" ]]; then
-            n_r2=\$(grep -c '^>' ${prefix}.extracted_2.${suffix} || echo 0)
-        else
-            n_r2=\$(( \$(wc -l < ${prefix}.extracted_2.${suffix}) / 4 ))
+    R2_SUFFIX=""
+    if [[ "\${IS_PAIRED}" == "true" ]]; then
+        R2_HEADER=\$(gzip -cd "\${R2}" | sed -n '1p')
+        if   [[ "\${R2_HEADER}" == *"/2" ]]; then R2_SUFFIX="/2"
+        elif [[ "\${R2_HEADER}" == *".2" ]]; then R2_SUFFIX=".2"
         fi
+        echo "[INFO] Detected R2 suffix: '\${R2_SUFFIX}'"
     fi
 
-    # ── Write summary ────────────────────────────────────────────────────
+    for id_file in per_taxid/\${PREFIX}_*.readids.txt; do
+        [[ -f "\${id_file}" ]] || continue
+
+        n_ids=\$(wc -l < "\${id_file}" || echo 0)
+        taxid=\$(basename "\${id_file}" .readids.txt | sed "s/\${PREFIX}_//")
+
+        if [[ \${n_ids} -eq 0 ]]; then
+            echo "[INFO]   taxid \${taxid}: 0 read IDs — skipping"
+            continue
+        fi
+
+        echo "[INFO]   taxid \${taxid}: extracting \${n_ids} read pairs"
+
+        # Build R1-specific and R2-specific ID lists with correct suffix
+        r1_ids="per_taxid/\${PREFIX}_\${taxid}.r1ids.txt"
+        sed "s|\$|\${R1_SUFFIX}|" "\${id_file}" > "\${r1_ids}"
+        seqtk subseq "\${R1}" "\${r1_ids}" >> \${PREFIX}.extracted_R1.fasta
+
+        if [[ "\${IS_PAIRED}" == "true" ]]; then
+            r2_ids="per_taxid/\${PREFIX}_\${taxid}.r2ids.txt"
+            sed "s|\$|\${R2_SUFFIX}|" "\${id_file}" > "\${r2_ids}"
+            seqtk subseq "\${R2}" "\${r2_ids}" >> \${PREFIX}.extracted_R2.fasta
+        fi
+
+        n_r1=\$(awk '/^>/{c++} END{print c+0}' \${PREFIX}.extracted_R1.fasta)
+        # n_r1=\$(grep -c '^>' \${PREFIX}.extracted_R1.fasta 2>/dev/null || echo 0)
+        echo "[INFO]   taxid \${taxid}: R1 sequences so far: \${n_r1}"
+    done
+
+    # ── Final counts ────────────────────────────────────────────────────────
+    total_r1=\$(grep -c '^>' \${PREFIX}.extracted_R1.fasta 2>/dev/null || echo 0)
+    total_r2=0
+    if [[ "\${IS_PAIRED}" == "true" && -s "\${PREFIX}.extracted_R2.fasta" ]]; then
+        total_r2=\$(grep -c '^>' \${PREFIX}.extracted_R2.fasta 2>/dev/null || echo 0)
+    fi
+
+    echo ""
+    echo "[INFO] Total extracted: R1=\${total_r1}  R2=\${total_r2}"
+
+    # ── Global summary for VALIDATE_HITS ────────────────────────────────────
     {
-        echo "sample\\ttaxids\\tinclude_children\\tinclude_parents\\tn_extracted_R1\\tn_extracted_R2"
-        echo "${meta.id}\\t${taxid_list}\\t${include_children}\\t${include_parents}\\t\${n_r1}\\t\${n_r2}"
-    } > ${prefix}.summary.txt
+        printf "sample\ttaxids\tmax_per_taxid\tseed\tn_extracted_R1\tn_extracted_R2\n"
+        printf "${meta.id}\t\${TAXID_CSV}\t\${MAX_READS}\t\${SEED}\t\${total_r1}\t\${total_r2}\n"
+    } > \${PREFIX}.summary.txt
 
-    echo "[INFO] Extracted reads: R1=\${n_r1} R2=\${n_r2}"
+    # ── Compress ─────────────────────────────────────────────────────────────
+    pigz -p \${CPUS} -f \${PREFIX}.extracted_R1.fasta
+    if [[ "\${IS_PAIRED}" == "true" && -f "\${PREFIX}.extracted_R2.fasta" ]]; then
+        pigz -p \${CPUS} -f \${PREFIX}.extracted_R2.fasta
+    fi
 
-    # ── Compress outputs ─────────────────────────────────────────────────
-    if command -v pigz &>/dev/null; then
-        pigz -p ${task.cpus} -f ${prefix}.extracted_1.${suffix}
-    else
-        gzip -f ${prefix}.extracted_1.${suffix}
-    fi
-    if [[ "${is_paired}" == "true" && -f "${prefix}.extracted_2.${suffix}" ]]; then
-        if command -v pigz &>/dev/null; then
-            pigz -p ${task.cpus} -f ${prefix}.extracted_2.${suffix}
-        else
-            gzip -f ${prefix}.extracted_2.${suffix}
-        fi
-    fi
+    echo "[INFO] Done: ${meta.id}"
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
-        krakentools: \$(extract_kraken_reads.py --version 2>&1 | sed 's/.*v//; s/ .*//' || echo "1.2")
-        compression: \$(command -v pigz &>/dev/null && pigz --version 2>&1 | sed 's/pigz //' || gzip --version 2>&1 | head -1 | sed 's/gzip //')
+        python: \$(python3 --version | sed 's/Python //')
+        seqtk: \$(seqtk 2>&1 | grep -oP 'Version: \\K[0-9.]+' || echo "1.4")
+        pigz: \$(pigz --version 2>&1 | sed 's/pigz //')
     END_VERSIONS
     """
 
     stub:
     prefix = task.ext.prefix ?: "${meta.id}"
-    suffix = (task.ext.fastq_output ?: false) ? 'fastq' : 'fasta'
-    def is_paired = reads instanceof List && reads.size() == 2
     """
-    echo ">stub_read1" > ${prefix}.extracted_1.${suffix}
-    echo "ACGTACGTACGT" >> ${prefix}.extracted_1.${suffix}
-    command -v pigz &>/dev/null && pigz -f ${prefix}.extracted_1.${suffix} || gzip -f ${prefix}.extracted_1.${suffix}
-    # pigz -f ${prefix}.extracted_1.${suffix}
+    mkdir -p per_taxid
+    printf ">stub\\nACGT\\n" | pigz > ${prefix}.extracted_R1.fasta.gz
+    printf ">stub\\nACGT\\n" | pigz > ${prefix}.extracted_R2.fasta.gz
+    printf "target_taxid\ttaxid\n"           > ${prefix}.taxid_abundance.tsv
+    printf "target_taxid\tn_reads_sampled\n" > ${prefix}.subsampling_summary.tsv
+    printf "read_id\ttaxid\n"               > ${prefix}.readid_taxid.tsv
+    printf "{}\n"                           > ${prefix}.taxid_groups.json
+    printf "sample\tn_extracted_R1\n"       > ${prefix}.summary.txt
 
-    if [[ "${is_paired}" == "true" ]]; then
-        echo ">stub_read1" > ${prefix}.extracted_2.${suffix}
-        echo "ACGTACGTACGT" >> ${prefix}.extracted_2.${suffix}
-        command -v pigz &>/dev/null && pigz -f ${prefix}.extracted_2.${suffix} || gzip -f ${prefix}.extracted_2.${suffix}
-        # pigz -f ${prefix}.extracted_2.${suffix}
-    fi
-
-    echo "sample\\ttaxids\\tn_extracted_R1" > ${prefix}.summary.txt
-    echo "${meta.id}\\tstub\\t1" >> ${prefix}.summary.txt
-
-    cat <<-END_VERSIONS > versions.yml
-    "${task.process}":
-        krakentools: 1.2
-        compression: stub
-    END_VERSIONS
+    {
+    echo '"${task.process}":'
+    echo "    python: \$(python3 --version | sed 's/Python //')"
+    echo "    seqtk: \$(seqtk 2>&1 | grep -oP 'Version: \\K[0-9.]+' || echo '1.4')"
+    echo "    pigz: \$(pigz --version 2>&1 | sed 's/pigz //')"
+    } > versions.yml
     """
 }

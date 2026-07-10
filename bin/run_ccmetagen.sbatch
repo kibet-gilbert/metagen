@@ -10,7 +10,7 @@
 #SBATCH -J ccmetagen
 #SBATCH --qos vip
 #SBATCH -n 16
-#SBATCH --mem 240G
+#SBATCH --mem 340G
 #SBATCH --time 72:00:00
 #SBATCH -o logs/ccmetagen_%j.out
 #SBATCH -e logs/ccmetagen_%j.err
@@ -31,11 +31,18 @@ export NXF_ANSI_LOG=false
 # ---------------------------------------------------------------------------
 # Project root and paths
 # ---------------------------------------------------------------------------
-INDIR="/home/gkibet/bioinformatics/github/metagenomics/data/20251201_sludge24_NextSeq2k/"
-PIPELINE_DIR="${INDIR}../../scripts/metagen/"
+INDIR="${PWD}"
+src_dir=${INDIR##*/}
+FASTQDIR=${INDIR}/fastq
+SCRIPTDIR=~/bioinformatics/github/metagenomics/scripts/
+DATADIR=/export/data/ilri/sarscov2/databases/
+PIPELINE_DIR="${SCRIPTDIR}metagen/"
 OUTDIR="${INDIR}/results_arg/ccmetagen"
-WORKDIR="/var/scratch/${USER}/ccmetagen_work"
+WORKDIR="/var/scratch/$USER/${src_dir}/ccmetagen_work"
+# WORKDIR=/var/scratch/$USER/${src_dir}
+src_dir1=${WORKDIR##*/}
 mkdir -p "${WORKDIR}" "${OUTDIR}" logs
+
 
 # ---------------------------------------------------------------------------
 # DB MODE — uncomment the block that matches your situation
@@ -65,7 +72,7 @@ DB_KEYWORD="core_nt"     # core_nt | nt | refseq
 # Paired-end example : "fastq/*_{R1,R2}.fastq.gz"
 # Single-end example : "fastq/*.fastq.gz"  (also set SINGLE_END=true)
 # ---------------------------------------------------------------------------
-READS="fastq/*_{R1,R2}.fastq.gz"
+READS="${FASTQDIR}/*_{R1,R2}.fastq.gz"
 SINGLE_END=false
 
 # ---------------------------------------------------------------------------

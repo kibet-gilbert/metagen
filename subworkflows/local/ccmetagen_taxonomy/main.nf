@@ -41,12 +41,12 @@ nextflow.enable.dsl = 2
 // ---------------------------------------------------------------------------
 // Module imports  (paths relative to project root)
 // ---------------------------------------------------------------------------
-include { BLAST_EXPORT      } from '../../../modules/local/blast_export'
-include { FASTA_CLEAN       } from '../../../modules/local/fasta_clean'
-include { CCMETAGEN_DB      } from '../../../modules/local/ccmetagen_db'
-include { KMA_ALIGN         } from '../../../modules/local/kma_align'
-include { CCMETAGEN         } from '../../../modules/local/ccmetagen'
-include { CCMETAGEN_MERGE   } from '../../../modules/local/ccmetagen_merge'
+include { BLAST_EXPORT  } from '../../../modules/local/blast_export'
+include { FASTA_CLEAN   } from '../../../modules/local/fasta_clean'
+include { CCMETAGEN_DB  } from '../../../modules/local/ccmetagen/ccmetagen_db/main'
+include { KMA_ALIGN     } from '../../../modules/local/kma_align'
+include { CCMETAGEN     } from '../../../modules/local/ccmetagen/ccmetagen/main'
+include { CCMETAGEN_MERGE   } from '../../../modules/local/ccmetagen/ccmetagen_merge/main'
 
 // ---------------------------------------------------------------------------
 // SUBWORKFLOW: CCMETAGEN_TAXONOMY

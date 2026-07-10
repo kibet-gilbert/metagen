@@ -1,4 +1,4 @@
-# **Buildind CCMetagen database from *core_nt* or *nt* NCBI BLAST database**
+# **Building CCMetagen database from *core_nt* or *nt* NCBI BLAST database**
 
 ---
 

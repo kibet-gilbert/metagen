@@ -20,16 +20,16 @@
 #   sbatch scripts/validate_pathogen.sbatch
 # =============================================================================
 
-#SBATCH --job-name=validate_pathogen
+#SBATCH --job-name=validaPathogen_nf
 #SBATCH --output=logs/validate_pathogen_%j.log
 #SBATCH --error=logs/validate_pathogen_%j.err
-#SBATCH --partition=highmem
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=8
-#SBATCH --mem=900G
-#SBATCH --time=72:00:00
+#SBATCH --mem=800G
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=gkibet@ilri.org
+# #SBATCH --time=72:00:00
 
 set -Eeuo pipefail
 
@@ -68,10 +68,11 @@ OUTDIR="${WORKDIR}/results/pathogen_validation"
 # Salmonella Typhim: 90371   Escherichia coli       : 562
 # Klebsiella pneu  : 573     Acinetobacter baum     : 470
 # Pseudomonas aerug: 287     Neisseria gonorrhoeae  : 485
-# Haemophilus inf  : 727     Staphylococcus aureus  : 1280
-# Mononegavirales  : 11157   Bunyavirales           : 1980410
-# Flaviviridae     : 11050
-TARGET_TAXIDS="11157,11050,1980410,666,90370,90371,562,573,470,287,485,727,1280"
+# Haemophilus inf (S): 727     Staphylococcus aureus  (S) : 1280
+# Mononegavirales (F): 11157   Bunyavirales           () : 1980410
+# Flaviviridae    (F): 11050
+#TARGET_TAXIDS="11157,11050,1980410,666,90370,90371,562,573,470,287,485,727,1280"
+TARGET_TAXIDS="11157,11050,1980410,573,485"
 
 # ── BLAST database ────────────────────────────────────────────────────────────
 BLAST_DB_DIR="/export/data/bio/ncbi/blast/db/v5"
@@ -80,7 +81,7 @@ BLAST_DB_MODE="local"   # local | custom | remote
 
 # ── Extraction options ────────────────────────────────────────────────────────
 INCLUDE_CHILDREN=true
-MAX_READS_PER_TAXID=50000
+MAX_READS_PER_TAXID=500
 
 # ── BLAST options ─────────────────────────────────────────────────────────────
 BLAST_TASK="megablast"
@@ -132,7 +133,7 @@ echo "Outdir      : ${OUTDIR}"
 echo "Target taxa : ${TARGET_TAXIDS}"
 echo "BLAST DB    : ${BLAST_DB_DIR}/${BLAST_DB_NAME} (${BLAST_DB_MODE})"
 echo "Skip BLAST  : ${SKIP_BLAST}"
-echo "Resume      : ${RESUME:-none}"
+echo "Resume      : ${RESUME}"
 echo "======================================================================"
 
 # Load required modules

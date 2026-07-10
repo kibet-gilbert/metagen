@@ -4,10 +4,10 @@
 process AGGREGATE_VALIDATION {
     label 'process_low'
 
-    conda     "conda-forge::python=3.10 conda-forge::pandas=2.0"
+    conda     "conda-forge::python=3.14 conda-forge::pandas=2.2.1"
     container "${ workflow.containerEngine == 'singularity' ?
-        'https://depot.galaxyproject.org/singularity/pandas:2.0.3' :
-        'quay.io/biocontainers/pandas:2.0.3' }"
+        'https://depot.galaxyproject.org/singularity/pandas:2.2.1' :
+        'quay.io/biocontainers/pandas:2.2.1' }"
 
     publishDir(
         path:    "${params.outdir}/validation_summary",
