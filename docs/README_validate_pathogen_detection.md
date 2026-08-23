@@ -236,6 +236,147 @@ process {
 
 ---
 
+## Target Taxa
+
+Some of our target taxids include:
+
+```
+11157  → Mononegavirales    (Ebola, rabies, measles — all RNA viruses)
+11050  → Flaviviridae       (dengue, Zika, HCV, yellow fever — all RNA viruses)
+1980410→ Bunyavirales       (Rift Valley fever, CCHF — all RNA viruses)
+573    → Klebsiella pneumoniae  (bacterial)
+485    → Neisseria gonorrhoeae  (bacterial)
+```
+
+When targeting **RNA viruses** the BLAST strategy changes significantly compared to bacterial DNA targets. 
+
+> [!IMPORTANT]  
+> ***A standard BLASTn megablast fails for RNA viruses.***   
+> 1. RNA viruses mutate at rates 100–1,000× higher than bacteria. A Dengue virus (10⁻³ to 10⁻⁴ substitutions per site per year) isolated from Kenya may share only 75–85% nucleotide identity with the closest GenBank reference sequence, but 90–95% amino acid identity. So, better to use **`blastx`**: `nt` -> `aa` database.    
+> 2. **`megablast`** requires ≥90% nucleotide identity and uses long word seeds (28-mer). It will either miss divergent viral reads entirely or assign them to the wrong species. For bacterial targets like *Klebsiella* this is fine; for Flaviviridae it is not.
+
+---
+
+## Recommended strategy — split by target type
+
+The BLAST module should run two passes: one optimised for RNA viruses, one for bacterial targets, then merge results.
+
+### Pass 1 — RNA virus targets (11157, 11050, 1980410)
+
+**Algorithm: `blastx`** — translates the reads in all 6 frames then searches a protein database.
+
+This is the right choice because:
+- Protein sequences are 3–5× more conserved than nucleotide sequences across RNA virus strains   
+- A read with 78% nucleotide identity to a reference may still have 95% amino acid identity — `blastx` finds it, `blastn` misses it   
+- Short reads (150 bp) translate to ~50 amino acids — enough for a meaningful protein hit  
+
+**Database: `nr` with taxid restriction, or `ref_viruses_rep_genomes`**
+
+```bash
+# Option A — nr restricted to Viruses (taxid 10239), faster and more specific
+blastx \
+    -query extracted_reads.fasta \
+    -db /export/data/bio/ncbi/blast/db/v5/nr \
+    -taxids 10239 \
+    -evalue 1e-10 \
+    -max_target_seqs 5 \
+    -num_threads 16 \
+    -outfmt "6 qseqid sseqid pident length evalue bitscore staxids sscinames qcovs" \
+    -out viral_blastx.tsv
+
+# Option B — dedicated viral reference genomes (smaller, faster)
+blastx \
+    -query extracted_reads.fasta \
+    -db /export/data/bio/ncbi/blast/db/v5/ref_viruses_rep_genomes \
+    -evalue 1e-10 \
+    -max_target_seqs 5 \
+    -num_threads 16 \
+    -outfmt "6 qseqid sseqid pident length evalue bitscore staxids sscinames qcovs" \
+    -out viral_blastx.tsv
+```
+
+**If reads are from an RNA virus genome region that is highly conserved (e.g., polymerase)**, also run `dc-megablast` in parallel as a second pass for reads that are close to a reference:
+
+```bash
+# dc-megablast: discontinuous word seeds, better for divergent nucleotide sequences
+# than megablast but faster than blastn
+blastn \
+    -task dc-megablast \
+    -query extracted_reads.fasta \
+    -db /export/data/bio/ncbi/blast/db/v5/nt_viruses \
+    -evalue 1e-10 \
+    -perc_identity 80 \
+    -qcov_hsp_perc 70 \
+    -max_target_seqs 5 \
+    -num_threads 16 \
+    -outfmt "6 qseqid sseqid pident length evalue bitscore staxids sscinames qcovs" \
+    -out viral_blastn_dcmega.tsv
+```
+
+### Pass 2 — Bacterial targets (573, 485)
+
+Standard `megablast` against `nt` or `core_nt` — no changes needed here. Bacterial genomes are stable at nucleotide level and 150 bp reads map well with 90% identity thresholds.
+
+```bash
+blastn \
+    -task megablast \
+    -query extracted_reads.fasta \
+    -db /export/data/bio/ncbi/blast/db/v5/core_nt \
+    -evalue 1e-20 \
+    -perc_identity 90 \
+    -qcov_hsp_perc 80 \
+    -max_target_seqs 5 \
+    -num_threads 16 \
+    -outfmt "6 qseqid sseqid pident length evalue bitscore staxids sscinames qcovs" \
+    -out bacterial_blastn.tsv
+```
+
+---
+
+## Updated `BLAST_BLASTN` module — add mode `'rna_virus'`
+
+The module already supports a `mode` parameter. Add a fourth mode:
+
+```groovy
+// In kma_align.nf or blast_blastn.nf ext.mode options
+// mode = 'rna_virus'  → blastx against nr/ref_viruses_rep_genomes
+// mode = 'dc_megablast' → blastn dc-megablast for divergent DNA/RNA
+// mode = 'megablast'  → existing, for bacterial DNA targets
+// mode = 'resfinder'  → existing, for ARG quantification
+```
+
+In `nextflow.validate_pathogen.config`, define the mode per taxid group:
+
+```groovy
+// Route viral taxids through blastx, bacterial through megablast
+process {
+    withName: 'BLAST_BLASTN' {
+        // Default to rna_virus mode since most novel targets in
+        // wastewater RNA runs are RNA viruses
+        ext.db_mode     = 'local'
+        ext.task_mode   = params.blast_task ?: 'rna_virus'
+        ext.evalue      = '1e-10'
+        ext.perc_identity = 80    // lower threshold for RNA virus divergence
+        ext.qcov_hsp    = 70      // allow partial gene coverage
+        ext.max_target_seqs = 5
+    }
+}
+```
+
+---
+
+## Database decision table
+
+| Target group | Algorithm | Database | Identity | Why |
+|---|---|---|---|---|
+| Mononegavirales (11157) | `blastx` | `nr` (taxid:10239) | protein ≥40% | RNA viruses highly divergent at nt level |
+| Flaviviridae (11050) | `blastx` + `dc-megablast` | `nr` + `nt_viruses` | protein ≥40%, nt ≥80% | Dengue/Zika have well-covered references |
+| Bunyavirales (1980410) | `blastx` | `nr` (taxid:10239) | protein ≥40% | CCHF/RVF very divergent |
+| *K. pneumoniae* (573) | `megablast` | `core_nt` | nt ≥90% | Stable bacterial genome |
+| *N. gonorrhoeae* (485) | `megablast` | `core_nt` | nt ≥90% | Stable bacterial genome |
+
+The lowered identity threshold for viral targets (40% protein) reflects the genuine biological divergence of RNA viruses circulating in East Africa compared to reference sequences deposited by labs in North America or Europe. Requiring 95% protein identity would exclude real positive hits that are just divergent local strains.
+
 ## Configuration
 
 ### Choosing BLAST database mode

@@ -9,7 +9,7 @@
 #SBATCH -p batch
 #SBATCH -J bracken_reestimate
 #SBATCH --qos vip
-#SBATCH -n 16
+#SBATCH -n 12
 #SBATCH --mem 240G
 #SBATCH --time 48:00:00
 #SBATCH -o logs/bracken_%j.out
@@ -32,12 +32,13 @@ export NXF_ANSI_LOG=false
 # Paths — edit these before running
 # ---------------------------------------------------------------------------
 # INDIR="$PWD"                                # Analysis root (where data lives)
-INDIR="/home/gkibet/bioinformatics/github/metagenomics/data/visualization_WWP2/"
+# INDIR="/home/gkibet/bioinformatics/github/metagenomics/data/visualization_WWP2/"
+INDIR="/home/gkibet/bioinformatics/github/metagenomics/data/visualization/"
 PIPELINE_DIR="${INDIR}../../scripts/metagen/" # project root (where main.nf is)
-KREPORTS="${INDIR}/kreports/kraken2/*.kraken2_report.txt"
+KREPORTS="${INDIR}/kreports/wastewater/kraken2/*.kraken2_report.txt"
 DB="/export/data/ilri/sarscov2/databases/metagenomicsDBs/20231129_k2_nt_20231129"  # <-- set your DB path
 
-OUTDIR="${INDIR}/kreports"
+OUTDIR="${INDIR}/kreports/wastewater"
 WORKDIR="/var/scratch/${USER}/bracken_work"
 
 mkdir -p "$WORKDIR" "$OUTDIR"
@@ -46,7 +47,7 @@ mkdir -p "$WORKDIR" "$OUTDIR"
 # Bracken settings — adjust as needed
 # ---------------------------------------------------------------------------
 READLEN=150         # must match the --read_len used during kraken2-build
-LEVEL="S1"           # S=species  G=genus  F=family  O=order  C=class  P=phylum
+LEVEL="S"           # S=species  G=genus  F=family  O=order  C=class  P=phylum
 THRESHOLD=10        # minimum read count to re-estimate a taxon
 BUILD_DB=false      # set to true if your DB lacks a .kmer_distrib file
 
